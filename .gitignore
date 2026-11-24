@@ -1,0 +1,11 @@
+/build/
+/miniGestures.exe
+/miniGestures.json
+/Strokesmini.json
+/Strokelite.json
+*.obj
+*.res
+*.pdb
+*.ilk
+*.user
+.vs/

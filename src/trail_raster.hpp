@@ -1,0 +1,14 @@
+#pragma once
+static inline int trailArgbToColorRef(u32 v){return ((v>>16)&255)|(v&0xff00)|((v&255)<<16);}
+static inline void trailHex(int c,W* out){const W* digits=L"0123456789ABCDEF";out[0]=L'#';for(int i=0;i<3;i++){int v=(c>>(8*i))&255;out[1+i*2]=digits[v>>4];out[2+i*2]=digits[v&15];}out[7]=0;}
+static inline bool parseTrailHex(const W* s,int& color){if(*s==L'#')s++;if(len(s)!=6)return false;int value=0;for(int i=0;i<6;i++){W c=fold(s[i]);int n=c>=L'0'&&c<=L'9'?c-L'0':c>=L'a'&&c<=L'f'?c-L'a'+10:-1;if(n<0)return false;value|=n<<((i/2)*8+(i%2?0:4));}color=value;return true;}
+static inline u32 trailPixel(int c,int a){return ((u32)a<<24)|(((c&255)*a/255)<<16)|((((c>>8)&255)*a/255)<<8)|(((c>>16)&255)*a/255);}
+struct TrailBounds{int x,y,w,h;};
+static inline TrailBounds trailBounds(const P* p,int n,int width){int x=p[0].x,y=p[0].y,r=x,b=y;for(int i=1;i<n;i++){x=minn(x,p[i].x);y=minn(y,p[i].y);r=maxn(r,p[i].x);b=maxn(b,p[i].y);}int pad=width/2+3;return {x-pad,y-pad,r-x+2*pad+1,b-y+2*pad+1};}
+struct TrailStamp{int width=0,color=0;u32 pixels[32*32];};
+static inline void rasterTrail(u32* dst,TrailBounds b,const P* p,int n,int width,int color,TrailStamp* cache=nullptr){int rad=width/2+2;TrailStamp local;auto& brush=cache?*cache:local;u32* stamp=brush.pixels;int stride=2*rad+1;if(brush.width!=width||brush.color!=color){brush.width=width;brush.color=color;for(int y=-rad;y<=rad;y++)for(int x=-rad;x<=rad;x++){int hit=0;for(int sy=0;sy<4;sy++)for(int sx=0;sx<4;sx++){int xx=x*8+sx*2-3,yy=y*8+sy*2-3;hit+=xx*xx+yy*yy<=width*width*16;}stamp[(y+rad)*stride+x+rad]=trailPixel(color,(hit*255+8)/16);}}
+ auto dab=[&](int x,int y){x-=b.x;y-=b.y;for(int dy=-rad;dy<=rad;dy++){int yy=y+dy;if(yy<0||yy>=b.h)continue;for(int dx=-rad;dx<=rad;dx++){int xx=x+dx;if(xx<0||xx>=b.w)continue;u32 v=stamp[(dy+rad)*stride+dx+rad];if(!v)continue;u32& d=dst[(up)yy*b.w+xx];if((v>>24)>(d>>24))d=v;}}};
+ for(int i=1;i<n;i++){int x=p[i-1].x,y=p[i-1].y,x2=p[i].x,y2=p[i].y;int dx=absn(x2-x),dy=-absn(y2-y),sx=x<x2?1:-1,sy=y<y2?1:-1,err=dx+dy;for(;;){dab(x,y);if(x==x2&&y==y2)break;int e=2*err;if(e>=dy){err+=dy;x+=sx;}if(e<=dx){err+=dx;y+=sy;}}}
+}
+static inline bool trailContains(TrailBounds a,TrailBounds b){return b.x>=a.x&&b.y>=a.y&&b.x+b.w<=a.x+a.w&&b.y+b.h<=a.y+a.h;}
+static inline TrailBounds trailGrow(TrailBounds b,TrailBounds old){if(old.w&&old.h){int r=maxn(b.x+b.w,old.x+old.w),d=maxn(b.y+b.h,old.y+old.h);b.x=minn(b.x,old.x);b.y=minn(b.y,old.y);b.w=r-b.x;b.h=d-b.y;}int x=b.x>=0?b.x/128*128:(b.x-127)/128*128,y=b.y>=0?b.y/128*128:(b.y-127)/128*128;return {x,y,((b.x+b.w-x+127)/128)*128,((b.y+b.h-y+127)/128)*128};}

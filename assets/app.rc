@@ -1,0 +1,25 @@
+1 ICON "assets/miniGestures.ico"
+2 ICON "assets/miniGestures-paused.ico"
+1 24 "assets/app.manifest"
+1 VERSIONINFO
+FILEVERSION 1,0,97,0
+PRODUCTVERSION 1,0,97,0
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904B0"
+  BEGIN
+   VALUE "FileDescription", "miniGestures\0"
+   VALUE "FileVersion", "1.0.97.0\0"
+   VALUE "ProductName", "miniGestures\0"
+   VALUE "ProductVersion", "1.0.97\0"
+   VALUE "OriginalFilename", "miniGestures.exe\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x409, 1200
+ END
+END
