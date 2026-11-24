@@ -1,6 +1,6 @@
 # miniGestures
 
-miniGestures is a lightweight, high-performance mouse gesture utility for Windows, written entirely in native C++ using Win32 APIs and optimized for fast gesture recognition, low resource consumption and no runtime dependencies.
+miniGestures is a lightweight (total exe size less than 700 KB), high-performance mouse gesture utility for Windows, written entirely in native C++ using Win32 APIs and optimized for fast gesture recognition, low resource consumption and no runtime dependencies.
 
 ## Features
 
