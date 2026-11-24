@@ -36,6 +36,17 @@ The script locates the Microsoft C++ toolchain, compiles the C++17 sources and W
 
 Settings are stored in `miniGestures.json` alongside the executable. Keep that file when upgrading and store the executable and settings in a trusted directory, especially when running with administrator rights.
 
+## Screenshots
+
+<img width="864" height="777" alt="Captura de ecrã 2026-11-24 191517" src="https://github.com/user-attachments/assets/64d0677d-a1d6-422a-a010-34b46b3d893b" />
+<img width="1094" height="917" alt="Captura de ecrã 2026-11-24 191500" src="https://github.com/user-attachments/assets/310274ea-8092-482d-84bc-8649407aa570" />
+<img width="1092" height="906" alt="Captura de ecrã 2026-11-24 191436" src="https://github.com/user-attachments/assets/0dd5dba8-d3d5-40ae-aa62-30b0ccd7931d" />
+<img width="1083" height="905" alt="Captura de ecrã 2026-11-24 191351" src="https://github.com/user-attachments/assets/3929f182-3a97-4f67-9b8b-31bb5443b46b" />
+<img width="1419" height="1054" alt="Captura de ecrã 2026-11-24 183045" src="https://github.com/user-attachments/assets/cc2240ff-6b97-4e38-9fc4-ff6eabc9ad26" />
+<img width="1130" height="989" alt="Captura de ecrã 2026-11-24 183022" src="https://github.com/user-attachments/assets/b0d16b7a-dad8-47b4-8624-fc7d92d63c3a" />
+<img width="973" height="848" alt="Captura de ecrã 2026-11-24 183003" src="https://github.com/user-attachments/assets/5597590c-526d-4f02-8a4c-6b0207ee06c3" />
+
+
 
 ## License
 
