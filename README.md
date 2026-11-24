@@ -1,6 +1,6 @@
 # miniGestures
 
-miniGestures is a lightweight, high-performance mouse gesture utility for Windows, written entirely in native C++17 using Win32 APIs and optimized for fast gesture recognition, low resource consumption and no separately installed runtime dependencies.
+miniGestures is a lightweight, high-performance mouse gesture utility for Windows, written entirely in native C++ using Win32 APIs and optimized for fast gesture recognition, low resource consumption and no runtime dependencies.
 
 ## Features
 
@@ -20,6 +20,11 @@ miniGestures is a lightweight, high-performance mouse gesture utility for Window
 14. Customizable gesture trail, sensitivity and minimum movement distance, with optional taskbar capture.
 15. Portable JSON settings with import/export, tray operation, Windows startup, administrator-window support, light/dark themes and six interface languages.
 
+## Prebuilt releases
+
+Simply download from the releases page
+https://github.com/iamfromreallife/miniGestures/releases
+
 ## Compile from source (Windows x64)
 
 1. Install [Visual Studio or Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with the **Desktop development with C++** workload, MSVC x64/x86 tools and a Windows SDK.
@@ -31,7 +36,6 @@ The script locates the Microsoft C++ toolchain, compiles the C++17 sources and W
 
 Settings are stored in `miniGestures.json` alongside the executable. Keep that file when upgrading and store the executable and settings in a trusted directory, especially when running with administrator rights.
 
-Source version: **1.0.97**. Drawn gestures execute on release of the activation button.
 
 ## License
 
