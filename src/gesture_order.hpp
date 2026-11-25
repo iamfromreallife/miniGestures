@@ -9,7 +9,7 @@ static inline int reorderGesture(Config& c,int source,int target,int category,bo
  if(target>=0&&(target>=c.ng||c.g[target].profile!=profile))return -1;
  if(category>=0&&(category>=c.nc||c.categories[category].profile!=profile))return -1;
  if(inside&&category<0)return -1;
- int slots[MAXG],order[MAXG],count=0,n=0;bool seen[MAXC]{};
+ Records<int> slots,order;Records<bool> seen;if(!slots.reserve(c.ng)||!order.reserve(c.ng)||!seen.reserve(c.nc))return -1;int count=0,n=0;
  for(int i=0;i<c.ng;i++)if(c.g[i].profile==profile){
   slots[count++]=i;int k=categoryIndex(c,profile,c.g[i].folder);
   if(k<0)order[n++]=i;
