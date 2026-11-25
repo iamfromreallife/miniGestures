@@ -13,7 +13,7 @@ static inline int commitAction(Gesture& g,int index,const Act& next){if(next.typ
 static inline bool hasTrigger(const Gesture&g){return g.hotkey>0||(g.trigger==0?g.count>0:g.trigger>=1&&g.trigger<=7);}
 struct Rule{int id,enabled,mode,inherit,uiOrder;W name[96],exe[260],cls[128],title[128],path[260],folder[96];};
 struct Category{int profile,collapsed,uiOrder;W name[96];};
-struct Config{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,settingsX,settingsY,settingsPositionSaved;Category categories[MAXC];Gesture g[MAXG];Rule a[MAXR],e[MAXR];};
+struct Config{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,disableFullscreenGestures,settingsX,settingsY,settingsPositionSaved;Category categories[MAXC];Gesture g[MAXG];Rule a[MAXR],e[MAXR];};
 // Rocker right always starts with the left button, independently of the default.
 static inline int activationButton(const Config&c,const Gesture&g){return g.trigger==6?1:(g.button?g.button:c.button);}
 struct Snapshot{volatile long refs;unsigned char buttons[6][16],keys[256][16];bool rules,pathRules,exclusionRules,mouseWanted,keyWanted;Config c;};

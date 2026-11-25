@@ -19,6 +19,9 @@ inline Palette systemPalette(Color face,Color window,Color text,Color gray,Color
  Palette p{face,window,text,gray,border,face,mix(face,text,7),mix(face,text,14),mix(window,highlight,12),mix(face,text,4),highlight,highlightText};
  if(!contrastMode){if(separation(p.bg,p.muted)<65)p.muted=mix(p.bg,p.ink,65);if(separation(p.field,p.frame)<35)p.frame=mix(p.field,p.ink,35);p.accentText=readable(highlight,text,window);}
  else {p.hover=p.pressed=p.category=face;p.selectedShape=window;}
+ // Override only the regular light-mode window background. Preserve Windows
+ // control colors, the legacy dark palette and accessibility palettes.
+ if(!dark&&!contrastMode)p.bg=rgb(243,243,243);
  return p;
 }
 }
