@@ -378,6 +378,15 @@ Args getArgs() {
 }
 }
 
+#include "update_host.hpp"
+extern "C" int WINAPI NativeUpdateStart(){try{return mg_update::start(executable())?1:0;}catch(...){mg_update::cancel();return 0;}}
+extern "C" int WINAPI NativeUpdateLatest(wchar_t* out,int cap){if(!out||cap<18)return 0;int i=0;for(;i<17&&mg_update::latest[i];++i)out[i]=mg_update::latest[i];out[i]=0;return i!=0;}
+static int copyUpdateText(const std::wstring& text,wchar_t* out,int cap){if(!out||cap<1)return 0;size_t n=text.size();if(n>=static_cast<size_t>(cap))n=cap-1;for(size_t i=0;i<n;++i)out[i]=text[i];out[n]=0;return static_cast<int>(n);}
+extern "C" int WINAPI NativeUpdateNotes(wchar_t* out,int cap){return copyUpdateText(mg_update::notes,out,cap);}
+extern "C" int WINAPI NativeUpdateError(wchar_t* out,int cap){return copyUpdateText(mg_update::error,out,cap);}
+extern "C" int WINAPI NativeUpdatePoll(){try{return mg_update::poll();}catch(...){mg_update::cancel();return 3;}}
+extern "C" void WINAPI NativeUpdateCancel(){mg_update::cancel();}
+extern "C" int WINAPI NativeUpdateMinute(){FILETIME ft{};GetSystemTimeAsFileTime(&ft);ULARGE_INTEGER v{};v.LowPart=ft.dwLowDateTime;v.HighPart=ft.dwHighDateTime;return static_cast<int>((v.QuadPart-116444736000000000ULL)/600000000ULL);}
 // SDK boundary for the freestanding UI translation unit. Keep errors visible
 // and do not close the old instance if UAC or child preflight fails.
 extern "C" DWORD WINAPI NativeRestartApplication(HWND owner, int admin, wchar_t* detail, DWORD capacity) {

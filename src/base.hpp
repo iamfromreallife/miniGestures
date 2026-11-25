@@ -9,6 +9,8 @@ static inline bool eq(const W*a,const W*b){while(*a&&*b&&fold(*a)==fold(*b)){++a
 static inline bool contains(const W*a,const W*b){if(!*b)return true;for(;*a;++a){int i=0;while(b[i]&&a[i]&&fold(a[i])==fold(b[i]))++i;if(!b[i])return true;}return false;}
 static inline int num(const W*s){int n=0,sign=1;if(*s==L'-'){sign=-1;++s;}while(*s>=L'0'&&*s<=L'9'){if(n>100000000)return sign*n;n=n*10+*s++-L'0';}return n*sign;}
 static inline void number(W*d,int n){W tmp[20];int k=0;unsigned v=n<0?0u-(unsigned)n:(unsigned)n;do{tmp[k++]=L'0'+v%10;v/=10;}while(v);int i=0;if(n<0)d[i++]=L'-';while(k)d[i++]=tmp[--k];d[i]=0;}
+// Presentation only: negative scores mean no measured recognition (editor test/preview).
+static inline void gestureScoreLabel(W*d,int cap,const W*name,int score){if(cap<=0)return;cp(d,name,cap);if(score<0||score>100)return;W suffix[16];cp(suffix,L" (",16);W n[16];number(n,score);cat(suffix,n,16);cat(suffix,L"%)",16);int tail=len(suffix);if(cap<=tail)return;cp(d,name,cap-tail);cat(d,suffix,cap);}
 static inline int absn(int x){return x<0?-x:x;} static inline int maxn(int a,int b){return a>b?a:b;} static inline int minn(int a,int b){return a<b?a:b;} static inline int clamp(int x,int a,int b){return maxn(a,minn(x,b));}
 static inline bool glob(const W*s,const W*p){const W*star=nullptr,*retry=nullptr;while(*s){if(*p==L'?'||fold(*p)==fold(*s)){++p;++s;}else if(*p==L'*'){star=p++;retry=s;}else if(star){p=star+1;s=++retry;}else return false;}while(*p==L'*')++p;return !*p;}
 static inline const W* basename(const W*s){const W*r=s;for(;*s;++s)if(*s==L'\\'||*s==L'/')r=s+1;return r;}
