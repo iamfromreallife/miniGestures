@@ -1,10 +1,54 @@
 #pragma once
 // Platform-independent integer recognition. Translation/scale normalized, order preserved.
-struct P{int x,y;}; constexpr int N=48;
+struct P{int x,y;}; constexpr int legacyShapePoints=48,N=70,maxDrawingPoints=1000,minSegmentPx=3;
+static constexpr int maxGestureTimeoutMs=60000;
+// Unsigned subtraction also handles GetTickCount wrapping during a stroke.
+static inline bool gestureTimeoutExpired(unsigned start,unsigned now,int limit){return limit>0&&now-start>=(unsigned)limit;}
+// Fixed-size capture: retain both ends when compacting an exceptionally long stroke.
+static inline void compactDrawing(P* p,int& n){int old=n,out=1;for(int i=2;i<old-1;i+=2)p[out++]=p[i];if(old>1)p[out++]=p[old-1];n=out;}
+static inline bool appendDrawingPoint(P* p,int& n,P q,bool endpoint=false){
+ if(n<1||n>maxDrawingPoints)return false;
+ long long dx=(long long)q.x-p[n-1].x,dy=(long long)q.y-p[n-1].y;
+ if(!dx&&!dy)return false;
+ // Avoid overflow even for coordinates spanning the entire signed int range.
+ if(!endpoint&&dx>-minSegmentPx&&dx<minSegmentPx&&dy>-minSegmentPx&&dy<minSegmentPx&&dx*dx+dy*dy<minSegmentPx*minSegmentPx)return false;
+ if(n==maxDrawingPoints)compactDrawing(p,n);p[n++]=q;return true;
+}
 static inline int rabs(int x){return x<0?-x:x;} static inline int rmax(int a,int b){return a>b?a:b;}
 static inline int dist(P a,P b){int x=rabs(a.x-b.x),y=rabs(a.y-b.y);return rmax(x,y)+(x<y?x:y)*3/8;}
 static inline int pathlen(const P*p,int n){int d=0;for(int i=1;i<n;i++)d+=dist(p[i-1],p[i]);return d;}
-static inline bool normalize(const P*p,int n,P*out){int total=pathlen(p,n);if(n<2||total<3)return false;int j=1,run=0,d=dist(p[0],p[1]);for(int k=0;k<N;k++){int target=(int)((long long)total*k/(N-1));while(j<n-1&&run+d<target){run+=d;j++;d=dist(p[j-1],p[j]);}int t=target-run;if(t<0)t=0;if(t>d)t=d;out[k]=d?P{p[j-1].x+(int)((long long)(p[j].x-p[j-1].x)*t/d),p[j-1].y+(int)((long long)(p[j].y-p[j-1].y)*t/d)}:p[j];}int minx=out[0].x,maxx=minx,miny=out[0].y,maxy=miny;for(int i=1;i<N;i++){auto q=out[i];if(q.x<minx)minx=q.x;if(q.x>maxx)maxx=q.x;if(q.y<miny)miny=q.y;if(q.y>maxy)maxy=q.y;}int s=rmax(maxx-minx,maxy-miny);if(!s)return false;for(int i=0;i<N;i++){out[i].x=(out[i].x-minx)*1024/s-(maxx-minx)*512/s;out[i].y=(out[i].y-miny)*1024/s-(maxy-miny)*512/s;}return true;}
+// Preserve fractional arc length and coordinates until the final normalized
+// integer representation. The previous integer-pixel interpolation could
+// collapse adjacent points on small gestures and distort corners.
+static inline long long arcDistance(P a,P b){long long x=(long long)a.x-b.x,y=(long long)a.y-b.y;if(x<0)x=-x;if(y<0)y=-y;return x>y?8*x+3*y:8*y+3*x;}
+static inline int nearestInt(double x){return (int)(x<0?x-0.5:x+0.5);}
+static inline bool normalize(const P*p,int n,P*out){
+ if(n<2||n>maxDrawingPoints)return false;
+ long long total=0;for(int i=1;i<n;i++)total+=arcDistance(p[i-1],p[i]);if(total<8*minSegmentPx)return false;
+ struct Precise{double x,y;};Precise points[N];
+ int j=1;long long run=0,d=arcDistance(p[0],p[1]);
+ for(int k=0;k<N;k++){
+  // All arc lengths are in eighth-pixel units; the rational target stays exact.
+  long long target=total*k;
+  while(j<n-1&&(run+d)*(N-1)<target){run+=d;++j;d=arcDistance(p[j-1],p[j]);}
+  double t=d?(double)(target-run*(N-1))/((double)d*(N-1)):1.0;
+  if(t<0)t=0;if(t>1)t=1;
+  points[k]={p[j-1].x+((double)p[j].x-p[j-1].x)*t,p[j-1].y+((double)p[j].y-p[j-1].y)*t};
+ }
+ double minx=points[0].x,maxx=minx,miny=points[0].y,maxy=miny;
+ for(int i=1;i<N;i++){auto q=points[i];if(q.x<minx)minx=q.x;if(q.x>maxx)maxx=q.x;if(q.y<miny)miny=q.y;if(q.y>maxy)maxy=q.y;}
+ double w=maxx-minx,h=maxy-miny,scale=w>h?w:h;if(scale<=0)return false;
+ for(int i=0;i<N;i++)out[i]={nearestInt(((points[i].x-minx)-w/2)*1024/scale),nearestInt(((points[i].y-miny)-h/2)*1024/scale)};
+ return true;
+}
+// Saved legacy points already represent equal arc-length intervals. Interpolate
+// by index, preserving their normalized geometry and exact endpoints; do not
+// renormalize or re-scale a sample that was already normalized by the old engine.
+static inline void migrateLegacyShape(const P* old,P* out){
+ for(int k=0;k<N;k++){int t=k*(legacyShapePoints-1),i=t/(N-1),f=t%(N-1);if(i==legacyShapePoints-1){out[k]=old[i];continue;}
+  auto lerp=[&](int a,int b){int v=a*(N-1-f)+b*f;return v<0?(v-(N-1)/2)/(N-1):(v+(N-1)/2)/(N-1);};out[k]={lerp(old[i].x,old[i+1].x),lerp(old[i].y,old[i+1].y)};
+ }
+}
 static inline int direction(int dx,int dy){int x=rabs(dx),y=rabs(dy);if(x*5<y*2)return dy<0?0:4;if(y*5<x*2)return dx>0?2:6;return dy<0?(dx>0?1:7):(dx>0?3:5);}
 static inline int sequence(const P*p,int n,char*out){int z=0;P anchor=p[0];for(int i=1;i<n;i++){if(dist(anchor,p[i])<90)continue;int d=direction(p[i].x-anchor.x,p[i].y-anchor.y);if(!z||out[z-1]!=char('0'+d)){if(z<31)out[z++]=char('0'+d);}anchor=p[i];}out[z]=0;return z;}
 static inline int score(const P*a,const P*b){int d=0;for(int i=0;i<N;i++)d+=dist(a[i],b[i]);int s=100-d*100/(N*1024);return s<0?0:s;}
@@ -25,30 +69,61 @@ static inline int bestShapeScore(const P* normalized,const P (*samples)[N],int c
 // Among accepted samples rank by continuous, ordered geometric evidence instead
 // of rounded percentages or hard eight-direction bin boundaries.
 // Compare point positions, local stroke vectors at two scales, and both ends.
-// All coordinates are the existing normalized 48 points; no allocations or
-// floating point, and translation/scale normalization is unchanged.
+// Rank the 70 normalized points using integer arithmetic. Scale chord spans
+// to retain approximately the same relative stroke lengths as at 48 points.
 struct RankedShape {int score; long long rank;};
 static constexpr long long shapeRankMax=1000000000LL;
+static constexpr int shortChordSpan=6,longChordSpan=18,endpointWeight=18;
 static inline int chordError(const P*a,const P*b,int span){int d=0;for(int k=span;k<N;k++){P av{a[k].x-a[k-span].x,a[k].y-a[k-span].y},bv{b[k].x-b[k-span].x,b[k].y-b[k-span].y};d+=dist(av,bv);}return d;}
 static inline long long shapeRank(const P*a,const P*b,int pointError){
  // Local vectors distinguish bends and hooks; longer chords tolerate small
  // corner-timing differences. Endpoints help distinguish open/closed strokes.
  int ends=dist(a[0],b[0])+dist(a[N-1],b[N-1]);
- long long loss=6LL*pointError+4LL*chordError(a,b,4)+2LL*chordError(a,b,12)+12LL*ends;
+ long long loss=6LL*pointError+4LL*chordError(a,b,shortChordSpan)+2LL*chordError(a,b,longChordSpan)+(long long)endpointWeight*ends;
  return shapeRankMax-loss;
 }
-static inline RankedShape rankedShapePrepared(const P*norm,const char*seq,int sn,const P (*samples)[N],int count,int threshold=0,int* observed=nullptr){
+// Average similarity alone can hide a severely mismatched suffix. Independent
+// geometric guards reject a wrong ending, sustained local deviation or substantial
+// extra travel, while allowing normal variations and small terminal hooks.
+static inline bool wholeStrokeCompatible(const P* a,const P* b){
+ constexpr int window=N/5, endpointLimit=300, tailMeanLimit=220, localMeanLimit=300;
+ if(dist(a[N-1],b[N-1])>endpointLimit||dist(a[0],b[0])>endpointLimit)return false;
+ int errors[window]{};int sum=0;long long travelA=0,travelB=0;
+ for(int i=0;i<N;i++){
+  int d=dist(a[i],b[i]),slot=i%window;sum+=d-errors[slot];errors[slot]=d;
+  if(i>=window-1&&sum>window*localMeanLimit)return false;
+  if(i){travelA+=arcDistance(a[i-1],a[i]);travelB+=arcDistance(b[i-1],b[i]);}
+ }
+ return sum<=window*tailMeanLimit&&travelB>0&&travelA*2<=travelB*3;
+}
+static inline RankedShape rankedShapePrepared(const P*norm,const char*seq,int sn,const P (*samples)[N],int count,int threshold=0,int* observed=nullptr,long long rankFloor=-1,bool requireComplete=false){
  RankedShape best{-1,-1};for(int i=0;i<count;i++){
   int d=0;for(int k=0;k<N;k++)d+=dist(norm[k],samples[i][k]);
   if(!d){if(observed)*observed=rmax(*observed,100);if(threshold<=100)return {100,shapeRankMax};}
   int base=rmax(0,100-d*100/(N*1024));int upper=(base*9+100)/10;
   if(upper<threshold&&(!observed||upper<=*observed))continue;
   char y[32];int ny=sequence(samples[i],N,y),dir=directionSimilarity(seq,sn,y,ny);int s=(base*9+dir)/10;
-  if(observed)*observed=rmax(*observed,s);if(s<threshold)continue;
+  if(observed)*observed=rmax(*observed,s);if(s<threshold||(requireComplete&&!wholeStrokeCompatible(norm,samples[i])))continue;
   // Position error alone is a lower bound on total loss.
-  if(shapeRankMax-6LL*d<best.rank)continue;
-  long long rank=shapeRank(norm,samples[i],d);
+  long long floor=best.rank>rankFloor?best.rank:rankFloor;
+  // All loss terms are non-negative. Strict inequality preserves score/ID tie breaks.
+  long long rank=shapeRankMax-6LL*d;
+  if(rank<floor)continue;
+  rank-=(long long)endpointWeight*(dist(norm[0],samples[i][0])+dist(norm[N-1],samples[i][N-1]));
+  if(rank<floor)continue;
+  rank-=4LL*chordError(norm,samples[i],shortChordSpan);
+  if(rank<floor)continue;
+  rank-=2LL*chordError(norm,samples[i],longChordSpan);
+  if(rank<floor)continue;
   if(rank>best.rank||(rank==best.rank&&s>best.score))best={s,rank};
   if(best.rank==shapeRankMax)break;
  }return best;
+}
+
+// Choose the medoid of a legacy gesture library: the actual sample with the
+// smallest sum of geometric losses to all other samples. Ties retain the first.
+static inline int representativeShape(const P (*samples)[N],int count){
+ if(count<=1)return 0;long long losses[64]{};
+ for(int i=0;i<count;i++)for(int j=0;j<i;j++){int d=0;for(int k=0;k<N;k++)d+=dist(samples[i][k],samples[j][k]);long long loss=shapeRankMax-shapeRank(samples[i],samples[j],d);losses[i]+=loss;losses[j]+=loss;}
+ int best=0;for(int i=1;i<count;i++)if(losses[i]<losses[best])best=i;return best;
 }

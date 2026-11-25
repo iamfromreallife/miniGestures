@@ -4,7 +4,20 @@
 static inline int ruleParent(const Config& c,int d,bool ex){return d>=0?categoryIndex(c,ex?-2:-1,(ex?c.e:c.a)[d].folder):-1;}
 static inline int& ruleRank(Config& c,int d,bool ex){return d>=0?(ex?c.e:c.a)[d].uiOrder:c.categories[-2-d].uiOrder;}
 static inline int ruleRank(const Config& c,int d,bool ex){return d>=0?(ex?c.e:c.a)[d].uiOrder:c.categories[-2-d].uiOrder;}
-static inline int ruleSiblings(const Config& c,int parent,int*out,bool ex){int n=0;for(int i=0;i<(ex?c.ne:c.na);i++)if(ruleParent(c,i,ex)==parent)out[n++]=i;if(parent<0)for(int i=0;i<c.nc;i++)if(c.categories[i].profile==(ex?-2:-1))out[n++]=-2-i;for(int i=1;i<n;i++){int d=out[i],j=i,rank=ruleRank(c,d,ex);while(j>0){int prev=ruleRank(c,out[j-1],ex);if(rank<=0||(prev>0&&prev<=rank))break;out[j]=out[j-1];j--;}out[j]=d;}return n;}
+static inline int ruleSiblings(const Config& c,int parent,int*out,bool ex){int n=0;const int profile=ex?-2:-1;const auto& rules=ex?c.e:c.a;int count=ex?c.ne:c.na;
+ // For an actual folder, resolve its canonical name once, not once per rule.
+ // Retain first-match behavior even for duplicate names in a draft configuration.
+ if(parent>=0){if(parent<c.nc&&c.categories[parent].profile==profile&&categoryIndex(c,profile,c.categories[parent].name)==parent){const W* name=c.categories[parent].name;for(int i=0;i<count;i++)if(eq(rules[i].folder,name))out[n++]=i;}}
+ else if(parent==-1){if(!c.nc){for(int i=0;i<count;i++)out[n++]=i;}else for(int i=0;i<count;i++)if(ruleParent(c,i,ex)==parent)out[n++]=i;}
+ if(parent<0)for(int i=0;i<c.nc;i++)if(c.categories[i].profile==(ex?-2:-1))out[n++]=-2-i;if(n>=64){
+ auto before=[&](int a,int b){int x=ruleRank(c,a,ex),y=ruleRank(c,b,ex);return x>0&&(y<=0||x<y);};
+ bool ordered=true;for(int i=1;i<n;i++)if(before(out[i],out[i-1])){ordered=false;break;}if(ordered)return n;
+ auto* temp=(int*)allocRaw((up)n*sizeof(int));if(temp){
+  int* src=out,* dst=temp;
+  for(up width=1;width<(up)n;width*=2){for(up lo=0;lo<(up)n;lo+=2*width){up mid=lo+width<(up)n?lo+width:n,hi=mid+width<(up)n?mid+width:n,a=lo,b=mid,k=lo;while(a<mid&&b<hi)dst[k++]=before(src[b],src[a])?src[b++]:src[a++];while(a<mid)dst[k++]=src[a++];while(b<hi)dst[k++]=src[b++];}int* swap=src;src=dst;dst=swap;}
+  if(src!=out)memcpy(out,src,(up)n*sizeof(int));freep(temp);return n;
+ }
+ }for(int i=1;i<n;i++){int d=out[i],j=i,rank=ruleRank(c,d,ex);while(j>0){int prev=ruleRank(c,out[j-1],ex);if(rank<=0||(prev>0&&prev<=rank))break;out[j]=out[j-1];j--;}out[j]=d;}return n;}
 static inline bool moveRuleNode(Config& c,int source,int target,int category,bool inside,bool before,bool ex){
  if(source==-1||source>=(ex?c.ne:c.na)||(source<=-2&&(-2-source>=c.nc||c.categories[-2-source].profile!=(ex?-2:-1))))return false;
  if(target>=(ex?c.ne:c.na)||category>=c.nc||(category>=0&&c.categories[category].profile!=(ex?-2:-1)))return false;

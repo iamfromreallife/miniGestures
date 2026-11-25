@@ -9,15 +9,15 @@ API B TrackMouseEvent(TrackMouse*);
 API B GetTextExtentPoint32W(HDC,const W*,int,POINT*);
 static_assert(sizeof(TrackMouse)==24);
 
-static PROC flatOld[160]{};
-static bool flatHover[160]{},flatDown[160]{};
+static PROC flatOld[164]{};
+static bool flatHover[164]{},flatDown[164]{};
 
 static UINT argb(DWORD rgb){return 0xff000000|((rgb&255)<<16)|(rgb&0xff00)|((rgb>>16)&255);}
 #include "theme_palette.hpp"
 #include "preview_raster.hpp"
 static DWORD ink,muted,accent,accentText,frame,fieldFill,buttonFill,hoverFill,pressedFill,appFill,shapeFill,categoryFill;
 static HBRUSH fieldBrush=nullptr;static bool darkTheme=false,legacyDarkTheme=false,highContrastTheme=false;
-static bool flatEdit(int id){switch(id){case APPSEARCH:case SEARCHBOX:case NAMEBOX:case FOLDERBOX:case KEYBOX:case SENSEBOX:case ARGBOX:case EXPATHBOX:case EXEBOX:case CLASSBOX:case TITLEBOX:case THRESHBOX:case TRAILCOLOR:case TRAILWIDTH:case INDICATORSECONDS:return true;default:return false;}}
+static bool flatEdit(int id){switch(id){case APPSEARCH:case SEARCHBOX:case NAMEBOX:case FOLDERBOX:case KEYBOX:case SENSEBOX:case ARGBOX:case EXPATHBOX:case EXEBOX:case CLASSBOX:case TITLEBOX:case THRESHBOX:case TRAILCOLOR:case TRAILWIDTH:case INDICATORSECONDS:case GESTURETIMEOUT:case FALLBACKBOX:return true;default:return false;}}
 static bool flatList(int id){return id==LIST||id==ACTLIST||id==APPLIST;}
 static bool flatCombo(int id){return id==BUTTONBOX||id==MODBOX||id==TRIGGERBOX||id==EXECBOX||id==MODEBOX||id==LANGBOX||id==THEMEBOX||id==UPDATEBOX;}
 static bool flatCheck(int id){return id==ENABLEBOX||id==INHERITBOX||id==OVERBOX||id==CLOSEBOX||id==STARTBOX||id==CONFIRMBOX||id==INDICATORBOX||id==STARTWINBOX||id==ADMINBOX||id==TOPBOX||id==TASKBARBOX||id==FULLSCREENBOX||id==SELECTOR_ENABLED||id==SELECTOR_INHERIT;}
@@ -78,7 +78,7 @@ static void flatFace(HWND h,HDC dest,int id){RECT r{};GetClientRect(h,&r);if(r.r
  }
  if(bmp){BitBlt(dest,0,0,r.right,r.bottom,mem,0,0,0xcc0020);SelectObject(mem,old);DeleteObject(bmp);}if(mem)DeleteDC(mem);
 }
-static LR CB flatProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h);if(id<0||id>=160||!flatOld[id])return DefWindowProcW(h,m,w,l);PROC orig=flatOld[id];bool face=flatCombo(id)||flatCheck(id);
+static LR CB flatProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h);if(id<0||id>=164||!flatOld[id])return DefWindowProcW(h,m,w,l);PROC orig=flatOld[id];bool face=flatCombo(id)||flatCheck(id);
  if(m==0x200&&!flatHover[id]){flatHover[id]=true;TrackMouse t{sizeof(t),2,h,0};TrackMouseEvent(&t);InvalidateRect(h,nullptr,0);}else if(m==0x2a3){flatHover[id]=false;InvalidateRect(h,nullptr,0);}else if(m==0x201){flatDown[id]=true;InvalidateRect(h,nullptr,0);}else if(m==0x202||m==0x215){flatDown[id]=false;InvalidateRect(h,nullptr,0);}
  if(m==0x18&&!w){flatHover[id]=false;flatDown[id]=false;}if(face&&m==0x14)return 1;
  if(face&&m==0xf){PAINT p{};HDC dc=BeginPaint(h,&p);flatFace(h,dc,id);EndPaint(h,&p);return 0;}
@@ -109,7 +109,7 @@ static void placeNativeEdit(HWND edit,HWND parent,RECT outer,int leftPad,int rig
  SetWindowPos(edit,nullptr,outer.left+leftPad,outer.top+band.top,maxn(1,outer.right-outer.left-leftPad-rightPad),band.height,4|16);
  alignNativeEdit(edit,parent,outer,textHeight,spare);
 }
-static void flatMetrics(){for(int i=0;i<160;i++)if(ctrl(i)){if(flatList(i))SendMessageW(ctrl(i),0x1a0,0,px(21));if(flatCombo(i)){SendMessageW(ctrl(i),0x153,(WP)-1,px(17));SendMessageW(ctrl(i),0x153,0,px(21));}if(flatEdit(i))SendMessageW(ctrl(i),0xd3,3,(LP)(px(2)|(px(2)<<16)));}}
+static void flatMetrics(){for(int i=0;i<164;i++)if(ctrl(i)){if(flatList(i))SendMessageW(ctrl(i),0x1a0,0,px(21));if(flatCombo(i)){SendMessageW(ctrl(i),0x153,(WP)-1,px(17));SendMessageW(ctrl(i),0x153,0,px(21));}if(flatEdit(i))SendMessageW(ctrl(i),0xd3,3,(LP)(px(2)|(px(2)<<16)));}}
 
 static float aaAbs(float v){return v<0?-v:v;}
 static float aaLen(float x,float y){x=aaAbs(x);y=aaAbs(y);float hi=x>y?x:y,lo=x>y?y:x;return hi+lo*0.375f;}
@@ -143,11 +143,16 @@ static void elevationIcon(HDC dc,int x,int y,DWORD fg){
 }
 #include "gesture_preview.hpp"
 // Keep geometry at 1/8-pixel precision until the final coverage resolve.
+#include "preview_cache.hpp"
+static PreviewCache previewCache;
 static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD bg){
  if(g.count<=0||!StretchDIBits)return false;
  constexpr int ss=mgpaint::samples;int w=r.right-r.left,h=r.bottom-r.top;
  if(w<=0||h<=0||w>256||h>256)return false;
  int sw=w*ss,sh=h*ss,arrow=maxn(2,px(3))*ss,thickness=maxn(1,px(1))*ss;
+ PreviewKey key{g.samples[0],w,h,arrow,thickness,color,bg};
+ CornerBitmapInfo bi{40,w,-h,1,32,0,(DWORD)(w*h*4),0,0,0,0};
+ if(const auto* pixels=previewCache.find(key))return StretchDIBits(dc,r.left,r.top,w,h,0,0,w,h,pixels,&bi,0,0xcc0020)>0;
  P points[N],head[3];
  if(!mgpreview::fit(g.samples[0],points,head,sw,sh,arrow,arrow+thickness))return false;
  auto* mask=(u8*)allocRaw((up)sw*sh);auto* pixels=(u32*)allocRaw((up)w*h*4);
@@ -156,9 +161,8 @@ static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD 
  for(int i=1;i<N;++i)mgpaint::segment(mask,sw,sh,points[i-1].x,points[i-1].y,points[i].x,points[i].y,thickness/2);
  for(int i=1;i<3;++i)mgpaint::segment(mask,sw,sh,head[i-1].x,head[i-1].y,head[i].x,head[i].y,thickness/2);
  for(int y=0;y<h;++y)for(int x=0;x<w;++x)pixels[y*w+x]=mgpaint::downsample(mask,sw,x,y,bg,color);
- CornerBitmapInfo bi{40,w,-h,1,32,0,(DWORD)(w*h*4),0,0,0,0};
  int result=StretchDIBits(dc,r.left,r.top,w,h,0,0,w,h,pixels,&bi,0,0xcc0020);
- freep(mask);freep(pixels);return result>0;
+ freep(mask);if(result<=0||!previewCache.remember(key,pixels))freep(pixels);return result>0;
 }
 static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::mix(fieldFill,RGB(0,120,212),darkTheme?20:12);}
 static DWORD rowSelectionText(bool hc){return hc?accentText:ink;}

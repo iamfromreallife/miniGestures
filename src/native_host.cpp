@@ -184,8 +184,11 @@ std::wstring argumentString(const Args& args) {
     for (const auto& arg : args) { if (!params.empty()) params += L' '; params += mg_host::quote(arg); }
     return params;
 }
-DWORD startThroughExplorer(const std::wstring& exe, const Args& args, const std::wstring& sid, std::wstring& stage) {
-    const auto dir = mg_host::directory(exe);
+DWORD startThroughExplorer(const std::wstring& exe, const Args& args, const std::wstring& sid, std::wstring& stage, bool screenClip=false) {
+    const auto dir = screenClip ? mg_host::directory(executable()) : mg_host::directory(exe);
+    // This mode is only for the fixed system capture URI; never accept an
+    // arbitrary caller-supplied protocol as an elevated shell request.
+    if (screenClip && (exe!=L"ms-screenclip://?source=PrintScreen" || !args.empty())) return ERROR_INVALID_PARAMETER;
     if (exe.empty() || dir.empty()) return ERROR_PATH_NOT_FOUND;
     stage=L"Explorer identity";
     HWND shell=GetShellWindow(); DWORD pid=0, shellSession=0, ourSession=0;
@@ -376,6 +379,62 @@ Args getArgs() {
     for (int i = 1; i < count; ++i) args.emplace_back(argv[i]);
     return args;
 }
+}
+
+// Respect the existing Windows Print Screen preference. Windows 11 defaults
+// to opening screen snipping when the per-user value has not been created.
+extern "C" int WINAPI NativeScreenClipEnabled() {
+    DWORD value=0, size=sizeof(value);
+    const LSTATUS result=RegGetValueW(HKEY_CURRENT_USER,L"Control Panel\\Keyboard",L"PrintScreenKeyForSnippingEnabled",RRF_RT_REG_DWORD,nullptr,&value,&size);
+    if(result==ERROR_SUCCESS) return value!=0;
+    if(result!=ERROR_FILE_NOT_FOUND && result!=ERROR_PATH_NOT_FOUND) return 0;
+    // Use the real OS build, not a manifest-sensitive compatibility version.
+    struct OSVersion { ULONG size, major, minor, build, platform; WCHAR servicePack[128]; } v{};
+    v.size=sizeof(v);
+    using VersionFn=LONG(WINAPI*)(OSVersion*);
+    auto version=reinterpret_cast<VersionFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"RtlGetVersion"));
+    return version&&version(&v)==0&&v.major>=10&&v.build>=22000;
+}
+namespace {
+volatile LONG screenClipLaunching=0;
+DWORD WINAPI screenClipWorker(void*) {
+    DWORD foregroundPid=0;GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
+    if(foregroundPid!=GetCurrentProcessId()){InterlockedExchange(&screenClipLaunching,0);return 0;}
+    bool launched=false;
+    try {
+        const auto id=currentIdentity();
+        // Use the same shell protocol as Windows' physical Print Screen
+        // shortcut. Do not request a result, capture pixels ourselves or
+        // register a new protocol handler.
+        const wchar_t* uri=L"ms-screenclip://?source=PrintScreen";
+        if(id.elevationKnown&&id.elevated){
+            std::wstring stage;
+            launched=startThroughExplorer(uri,{},id.sid,stage,true)==ERROR_SUCCESS;
+        } else if(id.elevationKnown) {
+            ShellApartment apartment;
+            SHELLEXECUTEINFOW info{};info.cbSize=sizeof(info);info.fMask=SEE_MASK_FLAG_NO_UI|SEE_MASK_NOASYNC;
+            info.lpVerb=L"open";info.lpFile=uri;info.nShow=SW_SHOWNORMAL;
+            launched=ShellExecuteExW(&info)!=FALSE;
+        }
+    } catch (...) {}
+    if(!launched){
+        // On a missing protocol or failed Explorer launch, preserve the
+        // normal Print Screen behavior, only while our window is still active.
+        DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);
+        if(pid==GetCurrentProcessId()&&!((GetAsyncKeyState(VK_SHIFT)|GetAsyncKeyState(VK_CONTROL)|GetAsyncKeyState(VK_MENU)|GetAsyncKeyState(VK_LWIN)|GetAsyncKeyState(VK_RWIN))&0x8000)){
+            INPUT keys[2]{};
+            for(auto& key:keys){key.type=INPUT_KEYBOARD;key.ki.wVk=VK_SNAPSHOT;key.ki.dwFlags=KEYEVENTF_EXTENDEDKEY;key.ki.dwExtraInfo=0x53544c495445ULL;}
+            keys[1].ki.dwFlags|=KEYEVENTF_KEYUP;SendInput(2,keys,sizeof(INPUT));
+        }
+    }
+    InterlockedExchange(&screenClipLaunching,0);return 0;
+}
+}
+extern "C" int WINAPI NativeQueueScreenClip(){
+    if(InterlockedCompareExchange(&screenClipLaunching,1,0)!=0)return 1;
+    HANDLE thread=CreateThread(nullptr,0,screenClipWorker,nullptr,0,nullptr);
+    if(!thread){InterlockedExchange(&screenClipLaunching,0);return 0;}
+    CloseHandle(thread);return 1;
 }
 
 #include "update_host.hpp"

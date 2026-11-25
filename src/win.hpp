@@ -11,6 +11,9 @@ struct LocalSystemTime{u16 year,month,dayOfWeek,day,hour,minute,second,milliseco
 static_assert(sizeof(LocalSystemTime)==16);
 API void GetLocalTime(LocalSystemTime*);
 API DWORD GetSysColor(int);
+struct MGScrollInfo{UINT cbSize,fMask;int nMin,nMax;UINT nPage;int nPos,nTrackPos;};
+API int SetScrollInfo(HWND,int,const MGScrollInfo*,B);
+API B GetScrollInfo(HWND,int,MGScrollInfo*);
 struct POINT{int x,y;}; struct RECT{int left,top,right,bottom;}; struct MSG{HWND hwnd;UINT message;WP wParam;LP lParam;DWORD time;POINT pt;DWORD lPrivate;};
 using PROC=LR(CB*)(HWND,UINT,WP,LP); using HOOK=LR(CB*)(int,WP,LP); using THREAD=DWORD(CB*)(void*);
 struct WC{UINT cbSize,style;PROC lpfnWndProc;int cbClsExtra,cbWndExtra;HINSTANCE hInstance;HICON hIcon;H hCursor;HBRUSH hbrBackground;const W* lpszMenuName;const W* lpszClassName;HICON hIconSm;};

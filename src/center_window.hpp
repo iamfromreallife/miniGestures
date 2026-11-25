@@ -1,10 +1,13 @@
 #pragma once
 #include "center_geometry.hpp"
 static inline bool centerWindow(HWND h,bool ordered){
- // Remember the destination monitor before restoring a maximized window.
+ // A maximized window is already occupying its work area. Treat the
+ // skipped action as successful so later sequential actions still run.
+ if(IsZoomed(h))return true;
+ // Remember the destination monitor before restoring a minimized window.
  H monitor=MonitorFromWindow(h,2);MONITOR mi{sizeof(mi)};
  if(!monitor||!GetMonitorInfoW(monitor,&mi))return false;
- if(IsZoomed(h)||IsIconic(h))ShowWindow(h,4);
+ if(IsIconic(h))ShowWindow(h,4);
  RECT outer{},visible{};if(!GetWindowRect(h,&outer))return false;
  visible=outer;
  // DWM's extended bounds exclude invisible resize borders, and both bounds

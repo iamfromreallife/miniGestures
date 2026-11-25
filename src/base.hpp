@@ -42,5 +42,7 @@ struct Regex {
 static inline bool is(const W*p){return *p&&fold(p[0])==L'r'&&fold(p[1])==L'e'&&p[2]==L':';}
 static inline bool valid(const W*p){if(!is(p))return true;Regex r;return r.compile(p+3)>=0;}
 static inline bool test(const W*s,const W*p){if(!is(p))return glob(s,p);Regex r;int i=r.compile(p+3);return i>=0&&r.match(s,i);}
+// Match the same executable rule against full path and basename, compiling once.
+static inline bool executableTest(const W*s,const W*p){if(!is(p))return glob(s,p)||glob(basename(s),p);Regex r;int i=r.compile(p+3);return i>=0&&(r.match(s,i)||r.match(basename(s),i));}
 }
 }
