@@ -19,7 +19,7 @@ static DWORD ink,muted,accent,accentText,frame,fieldFill,buttonFill,hoverFill,pr
 static HBRUSH fieldBrush=nullptr;static bool darkTheme=false,legacyDarkTheme=false,highContrastTheme=false;
 static bool flatEdit(int id){switch(id){case APPSEARCH:case SEARCHBOX:case NAMEBOX:case FOLDERBOX:case KEYBOX:case SENSEBOX:case ARGBOX:case EXPATHBOX:case EXEBOX:case CLASSBOX:case TITLEBOX:case THRESHBOX:case TRAILCOLOR:case TRAILWIDTH:case INDICATORSECONDS:case GESTURETIMEOUT:return true;default:return false;}}
 static bool flatList(int id){return id==LIST||id==ACTLIST||id==APPLIST;}
-static bool flatCombo(int id){return id==BUTTONBOX||id==MODBOX||id==TRIGGERBOX||id==EXECBOX||id==MODEBOX||id==LANGBOX||id==THEMEBOX||id==UPDATEBOX;}
+static bool flatCombo(int id){return id==BUTTONBOX||id==MODBOX||id==TRIGGERBOX||id==EXECBOX||id==MODEBOX||id==LANGBOX||id==THEMEBOX||id==UPDATEBOX||id==SHAPESELECT;}
 static bool flatCheck(int id){return id==ENABLEBOX||id==INHERITBOX||id==OVERBOX||id==CLOSEBOX||id==STARTBOX||id==CONFIRMBOX||id==INDICATORBOX||id==STARTWINBOX||id==ADMINBOX||id==TOPBOX||id==TASKBARBOX||id==FULLSCREENBOX||id==SELECTOR_ENABLED||id==SELECTOR_INHERIT;}
 static bool flatFrame(int id){return flatEdit(id)||flatList(id)||id==TRAIN;}
 static void fillSolid(HDC dc,RECT r,DWORD c){if(r.right<=r.left||r.bottom<=r.top)return;H b=CreateSolidBrush(c);if(b){FillRect(dc,&r,b);DeleteObject(b);}}
