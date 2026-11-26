@@ -89,7 +89,7 @@ static inline long long shapeRank(const P*a,const P*b,int pointError){
 static inline bool wholeStrokeCompatible(const P* a,const P* b){
  constexpr int window=N/5, endpointLimit=300, tailMeanLimit=220, localMeanLimit=300;
  if(dist(a[N-1],b[N-1])>endpointLimit||dist(a[0],b[0])>endpointLimit)return false;
- int errors[window]{};int sum=0;long long travelA=0,travelB=0;
+ int errors[window]{};int sum=0;double travelA=0,travelB=0;
  for(int i=0;i<N;i++){
   int d=dist(a[i],b[i]),slot=i%window;sum+=d-errors[slot];errors[slot]=d;
   if(i>=window-1&&sum>window*localMeanLimit)return false;
