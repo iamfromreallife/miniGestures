@@ -14,7 +14,7 @@ static inline bool hasTrigger(const Gesture&g){return g.hotkey>0||(g.trigger==0?
 struct Rule{int id,enabled,mode,inherit,uiOrder;W name[96],exe[260],cls[128],title[128],path[260],folder[96];};
 struct GlobalBlock{int profile,gesture;};
 struct Category{int profile,collapsed,uiOrder;W name[96];};
-struct ConfigScalars{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,disableFullscreenGestures,settingsX,settingsY,settingsPositionSaved,showGestureNames,indicatorX,indicatorY,indicatorPositionSaved,updateMode,updateLastCheck,indicatorSeconds,ignoredUpdateMajor,ignoredUpdateMinor,ignoredUpdatePatch,gestureTimeoutMs,fallbackSensitivity,nb;};
+struct ConfigScalars{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,disableFullscreenGestures,settingsX,settingsY,settingsPositionSaved,showGestureNames,indicatorX,indicatorY,indicatorPositionSaved,updateMode,updateLastCheck,indicatorSeconds,ignoredUpdateMajor,ignoredUpdateMinor,ignoredUpdatePatch,gestureTimeoutMs,nb;};
 // Heap-backed trivial records. Capacity grows geometrically; callers reserve
 // before changing counts. No allocations are made by the input hook.
 template<class T> struct Records{
@@ -71,8 +71,10 @@ struct BindingRange{
 };
 static inline void cacheAngular(Snapshot& s){
  const auto& c=s.c;if(c.ng<=0||(up)c.ng>((up)-1)/sizeof(mgangular::Signature))return;
+ bool any=false;for(int i=0;i<c.ng;i++){const auto& g=c.g[i];if(g.enabled&&g.steps&&!g.trigger&&g.count){any=true;break;}}
+ if(!any)return;
  s.angular=(mgangular::Signature*)allocRaw((up)c.ng*sizeof(mgangular::Signature));if(!s.angular)return;
- for(int i=0;i<c.ng;i++){const auto& g=c.g[i];s.angular[i]=g.enabled&&g.count?mgangular::signature(g.samples[0],N):mgangular::Signature{};}
+ for(int i=0;i<c.ng;i++){const auto& g=c.g[i];if(g.enabled&&g.steps&&!g.trigger&&g.count)s.angular[i]=mgangular::signature(g.samples[0],N);else s.angular[i].valid=false;}
 }
 static inline Snapshot* buildSnapshot(const Config&c){if(!c.validCounts())return nullptr;auto*s=(Snapshot*)allocRaw(snapshotBytes(c));if(s){memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;s->c.g=(Gesture*)(s+1);s->c.a=(Rule*)(s->c.g+maxn(1,c.ng));s->c.e=s->c.a+c.na;s->c.blocks=(GlobalBlock*)(s->c.e+c.ne);if(c.nb)memcpy(s->c.blocks,c.blocks.p,sizeof(GlobalBlock)*(up)c.nb);if(c.ng)memcpy(s->c.g,c.g.p,sizeof(Gesture)*c.ng);if(c.na)memcpy(s->c.a,c.a.p,sizeof(Rule)*c.na);if(c.ne)memcpy(s->c.e,c.e.p,sizeof(Rule)*c.ne);for(int i=0;i<c.na;i++)if(c.a[i].enabled&&(*c.a[i].exe||*c.a[i].cls||*c.a[i].title||*c.a[i].path)){s->rules=true;s->pathRules|=*c.a[i].exe!=0||*c.a[i].path!=0;}for(int i=0;i<c.ne;i++)if(c.e[i].enabled&&(*c.e[i].exe||*c.e[i].cls||*c.e[i].title||*c.e[i].path)){s->rules=true;s->exclusionRules=true;s->pathRules|=*c.e[i].exe!=0||*c.e[i].path!=0;}for(int i=0;i<c.ng;i++){auto&g=c.g[i];if(!g.enabled)continue;if(g.hotkey>0&&g.hotkey<256&&g.hotmods>=0&&g.hotmods<16)s->keys[g.hotkey][g.hotmods]=1,s->keyWanted=true;int b=activationButton(c,g);if(b>=1&&b<=5&&g.mods>=0&&g.mods<16&&g.trigger>=0&&g.trigger<8&&(g.trigger||g.count))s->buttons[b][g.mods]|=1<<g.trigger,s->mouseWanted=true;}indexBindings(*s);cacheAngular(*s);}return s;}
 // Editor Test executes just the selected gesture; do not clone unrelated records.
@@ -81,7 +83,7 @@ static inline Snapshot* buildTestSnapshot(const Config& c,const Gesture& edit){
  auto* s=(Snapshot*)allocRaw(sizeof(Snapshot)+sizeof(Gesture));if(!s)return nullptr;
  memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;
  s->c.ng=1;s->c.na=s->c.ne=s->c.nb=0;s->c.blocks=nullptr;s->c.g=(Gesture*)(s+1);s->c.a=s->c.e=(Rule*)(s->c.g+1);
- s->c.g[0]=edit;s->c.g[0].enabled=1;s->c.g[0].profile=0;cacheAngular(*s);return s;
+ s->c.g[0]=edit;s->c.g[0].enabled=1;s->c.g[0].profile=0;return s;
 }
 struct Target{HWND hwnd;DWORD pid;W exe[520],cls[128],title[256];HWND child;int x,y,hasPoint,inputSafety;};
 static inline Target target(HWND h){Target t{};t.child=h;t.hwnd=GetAncestor(h,2);if(!t.hwnd)t.hwnd=h;if(!t.hwnd)return t;GetWindowThreadProcessId(t.hwnd,&t.pid);H p=OpenProcess(0x1000,0,t.pid);if(p){DWORD n=520;QueryFullProcessImageNameW(p,0,t.exe,&n);CloseHandle(p);}GetClassNameW(t.hwnd,t.cls,128);GetWindowTextW(t.hwnd,t.title,256);return t;}
@@ -122,7 +124,7 @@ static inline bool replaceGlobalBlocks(Config&c,int pr,const int* ids,int count)
 static inline bool migrateGlobalBlocks(Config&c){int n=0;for(int i=0;i<c.nb;i++){auto b=c.blocks[i];if(!appExists(c,b.profile)||!globalExists(c,b.gesture))continue;bool duplicate=false;for(int j=0;j<n;j++)if(c.blocks[j].profile==b.profile&&c.blocks[j].gesture==b.gesture){duplicate=true;break;}if(!duplicate)c.blocks[n++]=b;}c.nb=n;for(int i=0;i<c.ng;i++){auto&g=c.g[i];if(g.profile&&appExists(c,g.profile)&&globalExists(c,g.preventGlobal)&&!addGlobalBlock(c,g.profile,g.preventGlobal))return false;g.preventGlobal=0;}return true;}
 static inline void initgesture(Gesture&g,int id,int p){memset(&g,0,sizeof(g));g.id=id;g.profile=p;g.enabled=1;g.button=0;g.sensitivity=75;g.steps=1;cp(g.name,L"New gesture",96);}
 static inline void preset(Gesture&g,const P*p,int n){g.count=normalize(p,n,g.samples[0])?1:0;}
-static inline void defaults(Config&c){c.clear();c.indicatorSeconds=4;c.fallbackSensitivity=100;c.version=2;c.layoutRevision=1;c.sensitivity=75;c.enabled=1;c.button=2;c.threshold=6;c.overlay=1;c.trailColor=-1;c.trailWidth=3;c.taskbarGestures=1;c.closeTray=1;c.nextid=1;const W* names[]={L"Maximize window",L"Minimize window",L"Browser back",L"Browser forward",L"Close window",L"Show desktop"};P p[6][3]={{{0,100},{0,0},{0,0}},{{0,0},{0,100},{0,100}},{{100,0},{0,0},{0,0}},{{0,0},{100,0},{100,0}},{{0,0},{100,100},{100,100}},{{0,0},{0,100},{0,0}}};int a[]={1,2,8,9,3,13};if(!c.g.reserve(6))return;for(int i=0;i<6;i++){auto&g=c.g[c.ng++];initgesture(g,c.nextid++,0);cp(g.name,names[i],96);preset(g,p[i],i==5?3:2);g.actions[0].type=a[i];}}
+static inline void defaults(Config&c){c.clear();c.indicatorSeconds=4;c.version=2;c.layoutRevision=1;c.sensitivity=75;c.enabled=1;c.button=2;c.threshold=6;c.overlay=1;c.trailColor=-1;c.trailWidth=3;c.taskbarGestures=1;c.closeTray=1;c.nextid=1;const W* names[]={L"Maximize window",L"Minimize window",L"Browser back",L"Browser forward",L"Close window",L"Show desktop"};P p[6][3]={{{0,100},{0,0},{0,0}},{{0,0},{0,100},{0,100}},{{100,0},{0,0},{0,0}},{{0,0},{100,0},{100,0}},{{0,0},{100,100},{100,100}},{{0,0},{0,100},{0,0}}};int a[]={1,2,8,9,3,13};if(!c.g.reserve(6))return;for(int i=0;i<6;i++){auto&g=c.g[c.ng++];initgesture(g,c.nextid++,0);cp(g.name,names[i],96);preset(g,p[i],i==5?3:2);g.actions[0].type=a[i];}}
 
 static inline int categoryIndex(const Config&c,int profile,const W*name){for(int i=0;i<c.nc;i++)if(c.categories[i].profile==profile&&eq(c.categories[i].name,name))return i;return -1;}
 static inline int ensureCategory(Config&c,int profile,const W*name){if(!*name)return -1;int i=categoryIndex(c,profile,name);if(i>=0)return i;if(!reserveMore(c.categories,c.nc))return -1;i=c.nc++;c.categories[i]={};c.categories[i].profile=profile;cp(c.categories[i].name,name,96);return i;}
