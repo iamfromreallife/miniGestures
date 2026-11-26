@@ -6,9 +6,7 @@
 #include "templates.hpp"
 #include "window_tray.hpp"
 static TrayClickFilter trayClicks;
-static HWND editorFrame=nullptr,editorContent=nullptr;
-static bool frameTransfer=false;
-static LR CB editorFrameProc(HWND,UINT,WP,LP);
+static HWND editorContent=nullptr;
 static LR CB editorContentProc(HWND,UINT,WP,LP);
 static HWND editorSurface(){return editorContent?editorContent:mainwnd;}
 #include "trail_raster.hpp"
@@ -39,7 +37,7 @@ static int modalCreateButton=0;static bool dialogOwnerLimited=false;static bool 
 static int appCategory=-1;static int categorySelection=-1;static HWND popup=nullptr,drawCanvas=nullptr;static HWND settingsWnd=nullptr;static HWND settingsControls[164]{};static bool settingsLoading=false;static void openSettingsView();static void closeSettingsView();static void updateSettingsTheme();
 static void updateTrayIcon();
 static void indicatorThemeChanged();
-static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.20";
+static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.21";
 static void failedGestureLabel(W* b,int cap,const W* name,int score){
  static const W* const failed[]={L"Gesture recognition failed",L"Falha no reconhecimento do gesto",L"Error de reconocimiento del gesto",L"Échec de la reconnaissance du geste",L"Gestenerkennung fehlgeschlagen",L"Riconoscimento del gesto non riuscito"};
  static const W* const similar[]={L" — Similar to ",L" — Semelhante a ",L" — Similar a ",L" — Similaire à ",L" — Ähnlich wie ",L" — Simile a "};
@@ -354,86 +352,41 @@ static void ensureUI();
 // The hidden controller is permanent. Only the unowned, top-level editor
 // frame is recreated; native child controls are parked, not rebuilt. This
 // preserves unsaved drafts, scroll positions, selection, and cached previews.
-static constexpr UINT hideToTrayFlags=1|2|4|16|0x200|0x80;
-// The content subtree has a stable HWND, fonts, child HWNDs and z-order.
-// Move only the container, never enumerate/reparent the individual controls.
-static bool transferEditorContent(HWND from,HWND to){
- using Fn=HWND(*)(HWND,HWND);
- static auto parent=(Fn)GetProcAddress(GetModuleHandleW(L"user32.dll"),"SetParent");
- if(!parent||!editorContent||!from||!to||from==to||GetAncestor(editorContent,1)!=from)return false;
- HWND old=parent(editorContent,to);
- if(old!=from&&GetAncestor(editorContent,1)!=to)return false;
- // SetParent can preserve screen-relative coordinates; explicitly restore
- // client origin without touching the child layout or window size.
- SetWindowPos(editorContent,nullptr,0,0,0,0,1|4|16|0x200);
- return GetAncestor(editorContent,1)==to;
-}
+// Build B: one permanent top-level HWND; no frame recreation or reparenting.
 static bool editorLayoutNeeded(){
  if(!laidout||!editorContent)return true;
  RECT host{},content{};
  return !GetClientRect(mainwnd,&host)||!GetClientRect(editorContent,&content)||
   host.right!=content.right||host.bottom!=content.bottom;
 }
-static void editorHostChanged(){
- int next=GetDpiForWindow(mainwnd);if(!next)next=96;
- if(next!=dpi){dpi=next;HFONT old=font,bold=tabBold;setfont();
-  for(int i=0;i<164;i++)if(controls[i])SendMessageW(controls[i],0x30,(WP)font,1);
-  if(old)DeleteObject(old);if(bold)DeleteObject(bold);flatMetrics();laidout=false;
- }
- hideNativeFocus(mainwnd);hideNativeFocus(editorSurface());
- // A normal reopen at identical size and DPI keeps the previous layout.
- if(editorLayoutNeeded())relayout();
-}
-static bool createEditorFrame(){
- if(editorFrame)return true;
- if(!controllerwnd||!editorContent||!ctrl(TAB0))return false;
- RECT r{};if(!GetWindowRect(controllerwnd,&r))return false;
- frameTransfer=true;
- HWND frame=CreateWindowExW(0,L"miniGesturesMain",L"miniGestures",mainStyle,
-  r.left,r.top,r.right-r.left,r.bottom-r.top,nullptr,nullptr,inst,nullptr);
- if(!frame){frameTransfer=false;return false;}
- if(!transferEditorContent(controllerwnd,frame)){
-  if(GetAncestor(editorContent,1)!=frame)DestroyWindow(frame);
-  frameTransfer=false;return false;
- }
- editorFrame=mainwnd=frame;
- themeCaption(frame);themeNative(frame);enableNativeWindowTransitions(frame);
- if(cfg.alwaysOnTop)SetWindowPos(frame,PTR(-1),0,0,0,0,1|2|16);
- frameTransfer=false;editorHostChanged();return true;
-}
+static constexpr UINT hideToTrayFlags=1|2|4|16|0x200|0x80;
+static constexpr UINT showFromTrayFlags=1|2|4|0x200|0x40;
+static bool mainShownOnce=false;
 static void showNativeMain(bool maximized){
  if(IsWindowVisible(mainwnd)&&!IsIconic(mainwnd))return;
- if(!editorFrame)createEditorFrame(); // Fallback: retain the usable controller UI on failure.
  enableNativeWindowTransitions(mainwnd);
- if(IsIconic(mainwnd))ShowWindow(mainwnd,9);
- else ShowWindow(mainwnd,maximized?3:1);
- if(!IsWindowVisible(mainwnd))ShowWindow(mainwnd,maximized?3:5);
+ if(IsIconic(mainwnd))ShowWindow(mainwnd,9); // SW_RESTORE
+ else if(!mainShownOnce)ShowWindow(mainwnd,maximized?3:1);
+ else if(maximized&&!IsZoomed(mainwnd))ShowWindow(mainwnd,3);
+ else if(!maximized&&IsZoomed(mainwnd))ShowWindow(mainwnd,9);
+ else SetWindowPos(mainwnd,nullptr,0,0,0,0,showFromTrayFlags); // SWP_SHOWWINDOW
+ // A launcher's STARTUPINFO can override the first ShowWindow command.
+ if(!IsWindowVisible(mainwnd)){
+  if(maximized&&!IsZoomed(mainwnd))ShowWindow(mainwnd,3);
+  else SetWindowPos(mainwnd,nullptr,0,0,0,0,showFromTrayFlags);
+ }
+ if(IsWindowVisible(mainwnd))mainShownOnce=true;
 }
 static void openmain(){testTarget=identity(GetForegroundWindow());ensureUI();showNativeMain(cfg.maximized!=0);SetForegroundWindow(mainwnd);remember();scheduleConflictCheck();}
 static void hideEditor(bool fromTray=false){
  if(popup||record||dialogOwnerLimited)return;
  remember();
- HWND old=editorFrame;
- if(old){
-  RECT normal{};
-  if(IsZoomed(old)||IsIconic(old)){
-   GetWindowRect(controllerwnd,&normal);
-   if(cfg.winw>=300&&cfg.winh>=300)normal={cfg.winx,cfg.winy,cfg.winx+cfg.winw,cfg.winy+cfg.winh};
-  }else GetWindowRect(old,&normal);
-  frameTransfer=true;
-  SetWindowPos(old,nullptr,0,0,0,0,hideToTrayFlags);
-  if(IsWindowVisible(old))ShowWindow(old,0);
-  if(transferEditorContent(old,controllerwnd)){
-   editorFrame=nullptr;mainwnd=controllerwnd;
-   if(normal.right>normal.left&&normal.bottom>normal.top)
-    SetWindowPos(controllerwnd,nullptr,normal.left,normal.top,normal.right-normal.left,normal.bottom-normal.top,4|16);
-   DestroyWindow(old);frameTransfer=false;editorHostChanged();
-  }else frameTransfer=false; // No loss of draft; retain old hidden frame as fallback.
- }else{
-  SetWindowPos(mainwnd,nullptr,0,0,0,0,hideToTrayFlags);
-  if(IsWindowVisible(mainwnd))ShowWindow(mainwnd,0);
- }
- if(fromTray){if(geometryDirty&&configValid)SetTimer(controllerwnd,95,750,nullptr);}
+ enableNativeWindowTransitions(mainwnd);
+ // Hide without requesting a second foreground activation from Explorer.
+ SetWindowPos(mainwnd,nullptr,0,0,0,0,hideToTrayFlags);
+ if(IsWindowVisible(mainwnd))ShowWindow(mainwnd,0);
+ // A tray click never waits for a synchronous config write or cache rebuild.
+ if(fromTray){if(geometryDirty&&configValid)SetTimer(mainwnd,95,750,nullptr);}
  else {saveGeometry();previewCache.clear();}
 }
 static void toggleEditor(){if(popup||record){openmain();return;}if(IsWindowVisible(mainwnd)&&!IsIconic(mainwnd))hideEditor(true);else openmain();}
@@ -753,12 +706,12 @@ static void advanceEngine(){if(exiting)return;if(!actionthread||!workerthread||G
 static void hookHealth(){static POINT prev{};static long events=0;static int misses=0;static DWORD lastRearm=0;POINT pt{};if(!mouseExpected||!hookok||!running||!GetCursorPos(&pt)){misses=0;events=mouseEvents;prev=pt;return;}long count=mouseEvents;bool changed=pt.x!=prev.x||pt.y!=prev.y;if(count!=events)misses=0;else if(changed)misses++;prev=pt;events=count;if(misses>=2&&GetTickCount()-lastRearm>=10000){misses=0;lastRearm=GetTickCount();PostThreadMessageW(hooktid,MSG_REARM,0,0);}}
 #include "trail_overlay.hpp"
 static LR CB mainproc(HWND h,UINT m,WP w,LP l){
- // Session shutdown and a close directed at the permanent controller are
- // real exit requests, not editor-window close-to-tray operations.
+ // Session shutdown and a close directed at the hidden permanent window
+ // are real exit requests; a visible editor retains close-to-tray behavior.
  if(m==0x11)return 1; // WM_QUERYENDSESSION
  if(m==0x16){if(w){beginShutdown();saveGeometry();if(controllerwnd&&IsWindow(controllerwnd))DestroyWindow(controllerwnd);}return 0;}
- if(m==0x10&&h==controllerwnd){beginShutdown();saveGeometry();DestroyWindow(controllerwnd);return 0;}
- if((frameTransfer||(h==controllerwnd&&mainwnd!=h))&&(m==0x3||m==0x5||m==0x2e0||m==0x111||m==0xa))return DefWindowProcW(h,m,w,l);if(dialogOwnerLimited){if(m==0x10){cancelCreation();return 0;}if(m==0x8010||m==0x8011)return 0;}LR uiState;if(nativeFocusState(h,m,w,l,uiState))return uiState;if(m==0x1){controllerwnd=mainwnd=h;themeCaption(h);themeNative(h);dpi=GetDpiForWindow(h);if(!dpi)dpi=96;if(!lazyUI)ensureUI();return 0;}if(m==0xa&&settingsWnd&&!settingsBusy){EnableWindow(settingsWnd,w!=0);}if(m==0x1a||m==0x31a||m==0x320||m==0x15){refreshTrailAccent();applyTheme();return DefWindowProcW(h,m,w,l);}if(m==0x5){if(w!=1&&ctrl(TAB0)&&editorLayoutNeeded())relayout();if(w!=1)remember();return 0;}if(m==0x3){remember();return 0;}if(m==0x232){remember();saveGeometry();return 0;}if(m==0x2e0){dpi=LO(w);HFONT f=font,tb=tabBold;if(ctrl(TAB0))setfont();for(int i=0;i<164;i++)if(controls[i])SendMessageW(controls[i],0x30,(WP)font,1);if(ctrl(TAB0)){if(f)DeleteObject(f);if(tb)DeleteObject(tb);}if(ctrl(TAB0))flatMetrics();laidout=false;auto*r=(RECT*)l;SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,4|16);if(ctrl(TAB0))relayout();return 0;}if(m==0x24){auto*p=(MINMAX*)l;p->minTrack=minimumOuter(h);return 0;}if(m==0x14)return 1;if(m==0xf){PAINT p{};HDC dc=BeginPaint(h,&p);FillRect(dc,&p.rcPaint,white);
+ if(m==0x10&&h==controllerwnd&&!IsWindowVisible(h)){beginShutdown();saveGeometry();DestroyWindow(controllerwnd);return 0;}
+ if(dialogOwnerLimited){if(m==0x10){cancelCreation();return 0;}if(m==0x8010||m==0x8011)return 0;}LR uiState;if(nativeFocusState(h,m,w,l,uiState))return uiState;if(m==0x1){controllerwnd=mainwnd=h;themeCaption(h);themeNative(h);dpi=GetDpiForWindow(h);if(!dpi)dpi=96;if(!lazyUI)ensureUI();return 0;}if(m==0xa&&settingsWnd&&!settingsBusy){EnableWindow(settingsWnd,w!=0);}if(m==0x1a||m==0x31a||m==0x320||m==0x15){refreshTrailAccent();applyTheme();return DefWindowProcW(h,m,w,l);}if(m==0x5){if(w!=1&&ctrl(TAB0)&&editorLayoutNeeded())relayout();if(w!=1)remember();return 0;}if(m==0x3){remember();return 0;}if(m==0x232){remember();saveGeometry();return 0;}if(m==0x2e0){dpi=LO(w);HFONT f=font,tb=tabBold;if(ctrl(TAB0))setfont();for(int i=0;i<164;i++)if(controls[i])SendMessageW(controls[i],0x30,(WP)font,1);if(ctrl(TAB0)){if(f)DeleteObject(f);if(tb)DeleteObject(tb);}if(ctrl(TAB0))flatMetrics();laidout=false;auto*r=(RECT*)l;SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,4|16);if(ctrl(TAB0))relayout();return 0;}if(m==0x24){auto*p=(MINMAX*)l;p->minTrack=minimumOuter(h);return 0;}if(m==0x14)return 1;if(m==0xf){PAINT p{};HDC dc=BeginPaint(h,&p);FillRect(dc,&p.rcPaint,white);
  if(!editorContent||h==editorContent){paintframes(dc);RECT r{};GetClientRect(h,&r);if(footerWnd&&place[STATUSBOX].show){int y=place[STATUSBOX].y-px(5);fillSolid(dc,{0,y,r.right,y+maxn(1,px(1))},frame);}}
  EndPaint(h,&p);return 0;}if(m==0x2c){auto*d=(MEASUREITEM*)l;if(d->type==2||d->type==3){d->height=px(21);return 1;}}if(m==0x2b){auto*d=(DRAWITEM*)l;if(d->type==2||d->type==3)paintRow(d);else if(d->type==4)paintButton(d);else return 0;return 1;}if(m==0x138||m==0x133||m==0x135||m==0x134||m==0x136){return (LR)controlColor((HDC)w,m,(HWND)l);}if(m==0x113&&w==102){tickUpdate();return 0;}if(m==0x113&&w==100){hookHealth();return 0;}if(m==0x113&&w==99){finishTest();return 0;}if(m==0x113&&w==93){KillTimer(h,93);startEngine();return 0;}if(m==0x113&&w==94){advanceEngine();return 0;}if(m==0x113&&w==95){KillTimer(h,95);if(!exiting)saveGeometry();return 0;}if(m==0x113&&w==97){if(WaitForSingleObject(hookready,0)==0){KillTimer(h,97);}else if(GetTickCount()-startupDeadline>3000){KillTimer(h,97);SetEvent(engineStop);if(hooktid)PostThreadMessageW(hooktid,0x12,0,0);if(worktid)PostThreadMessageW(worktid,0x12,0,0);if(actiontid)PostThreadMessageW(actiontid,0x12,0,0);(void)0;status(tr(STATUS_ERROR));}return 0;}if(m==MSG_ENGINE_READY){KillTimer(h,97);(void)0;if(!exiting){if(!w)publish(cfg);if(hookok)SetTimer(h,100,2000,nullptr);else KillTimer(h,100);status(L"");}return 0;}if(m==0x113&&w==96){if(!hookok){if(GetTickCount()-testStart>5000){testFailed=true;KillTimer(h,96);beginShutdown();DestroyWindow(h);}return 0;}KillTimer(h,96);if(busyTestMode){auto* j=allocateJob();auto* e=(Execution*)alloc(sizeof(Execution));auto* snap=snapshot(cfg);if(j&&e&&snap){snap->c.g[0].steps=parallelTestMode?2:1;snap->c.g[0].parallel=parallelTestMode?1:0;snap->c.g[0].actions[0].type=46;cp(snap->c.g[0].actions[0].arg,L"10000",256);if(parallelTestMode)snap->c.g[0].actions[1]=snap->c.g[0].actions[0];InterlockedExchange(&actionStarted,0);j->s=snap;e->j=j;e->idx=0;e->q=100;InterlockedIncrement(&pendingJobs);if(!PostThreadMessageW(actiontid,MSG_EXECUTE,0,(LP)e)){testFailed=true;finishJob(j);freep(e);}}else{testFailed=true;freep(j);freep(e);release(snap);}}if(busyTestMode&&!testFailed){testStart=GetTickCount();SetTimer(h,98,50,nullptr);}else SetTimer(h,92,300,nullptr);return 0;}if(m==0x113&&w==98){if(actionStarted||GetTickCount()-testStart>3000){KillTimer(h,98);if(!actionStarted)testFailed=true;SetTimer(h,92,300,nullptr);}return 0;}if(m==0x113&&w==92){KillTimer(h,92);beginShutdown();DestroyWindow(h);return 0;}if(m==0x111){if(exiting)return 0;int id=LO(w),code=HI(w);if(id<164&&flatFrame(id)&&(code==0x100||code==0x200||code==4||code==5)){auto&p=place[id];RECT q{p.x,p.y,p.x+p.w,p.y+p.h};InvalidateRect(editorSurface(),&q,0);}command(id,code);return 0;}if(m==0x312){if(popup&&popMode==5)return 0;if(w==1){toggleEngine();return 0;}if(!record)hotjob(cfg,HI(l),LO(l)&15);return 0;}if(m==MSG_RECORD){if(record)recordend((int)w,(int)l,w==0x1b);return 0;}if(m==0x113&&w==101){KillTimer(h,101);checkExistingConflicts();return 0;}if(m==MSG_GESTURE_TIMEOUT){if(!exiting){const W* const labels[]={L"Gesture recognition discarded — timeout",L"Reconhecimento do gesto cancelado — tempo limite",L"Reconocimiento del gesto descartado — tiempo agotado",L"Reconnaissance du geste annulée — délai dépassé",L"Gestenerkennung verworfen — Zeitlimit",L"Riconoscimento del gesto annullato — tempo scaduto"};status(labels[cfg.lang]);showIndicator(labels[cfg.lang]);}return 0;}if(m==MSG_RESULT){Result*r=takeResult((Result*)l);if(r){if(r->ok==2){showIndicator(r->name,r->score);freep(r);return 0;}if(r->ok){W b[256];gestureScoreLabel(b,256,r->name,r->score);if(r->ok<0){cat(b,L" — ",256);cat(b,et(ACTION_FAILED_E),256);showIndicator(b);}status(b);}else{W b[256];if(r->score>=0){failedGestureLabel(b,256,r->name,r->score);showIndicator(b);}else{cp(b,r->score==-2?et(AMBIGUOUS_E):r->score==-3?et(QUEUE_ERROR_E):et(EXCLUDED_E),256);if(r->score==-2)showIndicator(b);}status(b);}int ca=r->conflictId,cb=r->otherId;freep(r);if(ca&&cb)warnConflict(ca,cb);}return 0;}if(m==MSG_TRAIL){if(exiting)return 0;P q{(int)(u32)l,(int)(u32)((u64)l>>32)};if(w){clearTrailOverlay();trailN=0;}if(trailN==maxDrawingPoints)compactDrawing(trail,trailN);trail[trailN++]=q;if(trailN>=2)renderTrailOverlay(trail,trailN,effectiveTrailColor(cfg.trailColor),cfg.trailWidth);return 0;}if(m==MSG_CLEAR){trailN=0;clearTrailOverlay();return 0;}if(m==0x8010){if(exiting||settingsBusy||updatePrompt||trayMenuActive)return 0;using MessageTime=long(*)();static auto messageTime=(MessageTime)GetProcAddress(GetModuleHandleW(L"user32.dll"),"GetMessageTime");auto cmd=trayClicks.command(LO(l),messageTime?(unsigned)messageTime():GetTickCount());if(cmd==TrayToggleEditor){toggleEditor();return 0;}if(cmd==TrayToggleEngine){toggleEngine();return 0;}if(cmd==TrayContext){
  // Return from the shell notification before foreground activation or
@@ -772,20 +725,13 @@ static LR CB mainproc(HWND h,UINT m,WP w,LP l){
  if(exiting||settingsBusy||updatePrompt||popup||record||dialogOwnerLimited){InterlockedExchange(&trayMenuActive,0);return 0;}
  H menu=CreatePopupMenu();if(!menu){InterlockedExchange(&trayMenuActive,0);return 0;}
  AppendMenuW(menu,0,1001,tr(OPEN));AppendMenuW(menu,0,1004,tr(SETTINGS));if(updateAvailable)AppendMenuW(menu,0,1005,updateText(8));AppendMenuW(menu,0,1002,et(cfg.enabled?PAUSE_E:RESUME_E));AppendMenuW(menu,0,1003,tr(EXIT));
- HWND owner=editorFrame&&IsWindowVisible(editorFrame)&&!IsIconic(editorFrame)?editorFrame:controllerwnd;
+ HWND owner=controllerwnd;
  SetForegroundWindow(owner);
  UINT a=TrackPopupMenu(menu,0x100|2,(int)(u32)w,(int)l,0,owner,nullptr);
  DestroyMenu(menu);PostMessageW(owner,0,0,0);InterlockedExchange(&trayMenuActive,0);
  if(exiting)return 0;
  if(a==1001)openmain();if(a==1004)openSettingsView();if(a==1005&&updateAvailable){updateShowPending=true;presentUpdate();}if(a==1002)toggleEngine();if(a==1003){beginShutdown();remember();saveGeometry();DestroyWindow(controllerwnd);}return 0;}
- if(m==taskbarmsg&&taskbarmsg){if(!exiting)tray();return 0;}if(m==0x8011){if(!exiting&&!trayMenuActive){openmain();}return 0;}if(m==0x10){if(trayMenuActive&&!exiting)return 0;if(cfg.closeTray&&!exiting){hideEditor();return 0;}beginShutdown();remember();saveGeometry();DestroyWindow(controllerwnd);return 0;}if(m==0x2){if(h!=controllerwnd)return 0;beginShutdown();closeSettingsView();if(editorFrame){HWND old=editorFrame;editorFrame=nullptr;mainwnd=controllerwnd;DestroyWindow(old);}KillTimer(h,93);KillTimer(h,94);KillTimer(h,95);KillTimer(h,96);KillTimer(h,97);KillTimer(h,98);KillTimer(h,99);KillTimer(h,100);KillTimer(h,101);KillTimer(h,102);NativeUpdateCancel();if(pendingTest){release(pendingTest);pendingTest=nullptr;}UnregisterHotKey(h,1);Shell_NotifyIconW(2,&nid);destroyTrailOverlay();previewCache.clear();clearResults();PostQuitMessage(0);return 0;}return DefWindowProcW(h,m,w,l);}
-// A frame never owns background timers, the tray icon, or process shutdown.
-// Early creation/late destruction messages must not mutate the parked UI.
-static LR CB editorFrameProc(HWND h,UINT m,WP w,LP l){
- if(m==0x2||m==0x82)return DefWindowProcW(h,m,w,l);
- if(h!=editorFrame||h!=mainwnd||frameTransfer)return DefWindowProcW(h,m,w,l);
- return mainproc(h,m,w,l);
-}
+ if(m==taskbarmsg&&taskbarmsg){if(!exiting)tray();return 0;}if(m==0x8011){if(!exiting&&!trayMenuActive){openmain();}return 0;}if(m==0x10){if(trayMenuActive&&!exiting)return 0;if(cfg.closeTray&&!exiting){hideEditor();return 0;}beginShutdown();remember();saveGeometry();DestroyWindow(controllerwnd);return 0;}if(m==0x2){if(h!=controllerwnd)return 0;beginShutdown();closeSettingsView();KillTimer(h,93);KillTimer(h,94);KillTimer(h,95);KillTimer(h,96);KillTimer(h,97);KillTimer(h,98);KillTimer(h,99);KillTimer(h,100);KillTimer(h,101);KillTimer(h,102);NativeUpdateCancel();if(pendingTest){release(pendingTest);pendingTest=nullptr;}UnregisterHotKey(h,1);Shell_NotifyIconW(2,&nid);destroyTrailOverlay();previewCache.clear();clearResults();PostQuitMessage(0);return 0;}return DefWindowProcW(h,m,w,l);}
 // The content receives the native notifications formerly sent directly to
 // the frame. Forward them synchronously to the same command/owner-draw code,
 // with no message queue, and paint the client surface in its own coordinates.
@@ -797,7 +743,7 @@ static LR CB editorContentProc(HWND h,UINT m,WP w,LP l){
   EndPaint(h,&p);return 0;
  }
  if(m==0x111||m==0x2b||m==0x2c||m==0x138||m==0x133||m==0x135||m==0x134||m==0x136){
-  if(mainwnd&&!frameTransfer)return mainproc(mainwnd,m,w,l);
+  if(mainwnd&&!exiting)return mainproc(mainwnd,m,w,l);
   if(m==0x111)return 0;
  }
  return DefWindowProcW(h,m,w,l);
@@ -897,20 +843,22 @@ static bool uiSelfTest(){
  for(int pg=0;pg<3;pg++){setpage(pg);SetWindowPos(mainwnd,nullptr,0,0,300,300,4|16);relayout();RECT r{};GetClientRect(mainwnd,&r);if(r.right<px(compactClientWidth())||r.bottom<px(minimumClientHeight)||ctrl(HEAD)||logicalPlace[HEAD].show||(GetWindowLongPtrW(mainwnd,-16)&0x00300000))return false;if(!IsWindowVisible(footerWnd)||place[STATUSBOX].y!=r.bottom-px(21)||place[VERSIONBOX].x+place[VERSIONBOX].w!=r.right-px(12))return false;for(int i=0;i<164;i++)if(place[i].show&&ctrl(i)&&i!=STATUSBOX&&i!=VERSIONBOX){auto q=place[i];if(q.x<0||q.y<0||q.x+q.w>r.right||q.y+(flatCombo(i)?px(22):q.h)>r.bottom-px(21))return false;}}
  ShowWindow(mainwnd,0);
  // Recreate only the native top-level frame; the controller and draft survive.
- {HWND stable=controllerwnd,content=editorContent,name=ctrl(NAMEBOX);if(!content||GetAncestor(content,1)!=stable||GetAncestor(name,1)!=content)return false;txt(NAMEBOX,L"Unsaved editor draft");
-  showNativeMain(false);HWND first=editorFrame;if(!first||first==stable||GetAncestor(content,1)!=first||GetAncestor(name,1)!=content||!IsWindowVisible(first))return false;
-  hideEditor(true);if(editorFrame||mainwnd!=stable||IsWindow(first)||GetAncestor(content,1)!=stable||GetAncestor(name,1)!=content||!IsWindow(stable))return false;
-  showNativeMain(false);HWND second=editorFrame;W draft[96]{};get(NAMEBOX,draft,96);
-  if(!second||GetAncestor(content,1)!=second||GetAncestor(name,1)!=content||editorContent!=content||!eq(draft,L"Unsaved editor draft")||ctrl(NAMEBOX)!=name||controllerwnd!=stable)return false;
-  hideEditor(true);if(editorFrame||IsWindow(second)||mainwnd!=stable||GetAncestor(content,1)!=stable)return false;
-  // Repeated reveals preserve the entire native subtree and the layout.
-  for(int i=0;i<16;i++){showNativeMain(false);if(!editorFrame||GetAncestor(content,1)!=editorFrame||ctrl(NAMEBOX)!=name)return false;hideEditor(true);if(editorFrame||GetAncestor(content,1)!=stable||!IsWindow(content))return false;}
-  get(NAMEBOX,draft,96);if(!eq(draft,L"Unsaved editor draft"))return false;
+ {HWND stable=controllerwnd,content=editorContent,name=ctrl(NAMEBOX);
+  if(!content||GetAncestor(content,1)!=stable||GetAncestor(name,1)!=content)return false;
+  txt(NAMEBOX,L"Unsaved editor draft");
+  // Build B invariant: the frame, container and control handles never change.
+  for(int i=0;i<16;i++){
+   showNativeMain(false);
+   if(mainwnd!=stable||controllerwnd!=stable||!IsWindowVisible(stable)||editorContent!=content||GetAncestor(content,1)!=stable||ctrl(NAMEBOX)!=name)return false;
+   hideEditor(true);
+   if(mainwnd!=stable||!IsWindow(stable)||IsWindowVisible(stable)||GetAncestor(content,1)!=stable||GetAncestor(name,1)!=content)return false;
+  }
+  W draft[96]{};get(NAMEBOX,draft,96);if(!eq(draft,L"Unsaved editor draft"))return false;
  }
  (void)0;return true;
 }
 // Explicit diagnostic mode: exits before installing hooks or touching configuration.
-static int runApplication(){shutdownSignal=CreateEventW(nullptr,1,0,nullptr);startupReady=CreateEventW(nullptr,1,0,nullptr);if(shutdownSignal&&startupReady)watchdogThread=CreateThread(nullptr,0,shutdownWatchdog,nullptr,0,nullptr);if(!resolve_gui())return 3;if(contains(GetCommandLineW(),L"--loader-self-test"))return 0;bool windowTest=contains(GetCommandLineW(),L"--window-self-test");bool parallelTest=contains(GetCommandLineW(),L"--shutdown-parallel-self-test");bool busyTest=parallelTest||contains(GetCommandLineW(),L"--shutdown-busy-self-test");bool shutdownTest=busyTest||contains(GetCommandLineW(),L"--shutdown-self-test");noHooks=contains(GetCommandLineW(),L"--no-hooks");shutdownTestMode=shutdownTest;busyTestMode=busyTest;parallelTestMode=parallelTest;testStart=GetTickCount();inst=GetModuleHandleW(nullptr);H mutex=windowTest?nullptr:CreateMutexW(nullptr,0,L"Local\\miniGestures.v1");if(!windowTest&&!mutex){MessageBoxW(nullptr,L"Cannot establish single-instance protection.",L"miniGestures",0x10);return 2;}if(mutex&&GetLastError()==183){if(shutdownTest)return 6;HWND h=FindWindowW(L"miniGesturesController",nullptr);if(!h)h=FindWindowW(L"miniGesturesMain",nullptr);if(h)PostMessageW(h,0x8011,0,0);return 0;}if(!windowTest){H legacyGuard=CreateMutexW(nullptr,0,L"Local\\StrokeliteClean.v1");if(!legacyGuard)return 2;if(GetLastError()==183){HWND oldWindow=FindWindowW(L"StrokeliteCleanMain",nullptr);if(oldWindow&&!shutdownTest)PostMessageW(oldWindow,0x8011,0,0);return shutdownTest?6:0;}}(void)0;SetProcessDpiAwarenessContext(PTR(-4));DWORD pathSize=GetModuleFileNameW(nullptr,configpath,1024);if(!pathSize||pathSize>=1024)return 3;int n=(int)pathSize;while(n&&configpath[n-1]!=L'\\')n--;if(!n||n+20>=1024)return 3;configpath[n]=0;W previousConfig[1024],originalConfig[1024];cp(previousConfig,configpath,1024);cat(previousConfig,L"Strokesmini.json",1024);cp(originalConfig,configpath,1024);cat(originalConfig,L"Strokelite.json",1024);cat(configpath,L"miniGestures.json",1024);bool missing=GetFileAttributesW(configpath)==0xffffffff;const W* loadPath=configpath;if(missing&&!windowTest&&!shutdownTest){if(GetFileAttributesW(previousConfig)!=0xffffffff)loadPath=previousConfig;else if(GetFileAttributesW(originalConfig)!=0xffffffff)loadPath=originalConfig;}bool migrating=loadPath!=configpath;bool invalid=false,legacyShapes=false,shapeBackupFailed=false;if(windowTest||shutdownTest){defaults(cfg);}else if(!loadconfig(cfg,loadPath,&legacyShapes)){defaults(cfg);if(missing&&!migrating){firstSave=true;geometryDirty=true;}else{cfg.enabled=0;invalid=true;}}else if(legacyShapes&&!migrating){if(!backupMultiShapeConfig(configpath)){cfg.enabled=0;invalid=shapeBackupFailed=true;}else geometryDirty=true;}else if(migrating){firstSave=true;geometryDirty=true;}if(!invalid&&!cfg.layoutRevision){if(cfg.winw>=300)cfg.winw=maxn(640,cfg.winw-px(100));cfg.layoutRevision=1;geometryDirty=true;}configValid=!invalid;lazyUI=cfg.startTray&&!contains(GetCommandLineW(),L"--restart-wait")&&!windowTest&&!shutdownTest&&!noHooks&&!invalid;(void)0;applyTheme();appicon=LoadIconW(inst,(const W*)PTR(1));if(!appicon)appicon=LoadIconW(nullptr,(const W*)PTR(32512));pausedIcon=LoadIconW(inst,(const W*)PTR(2));updateIcon=LoadIconW(inst,(const W*)PTR(3));pausedUpdateIcon=LoadIconW(inst,(const W*)PTR(4));WC wc{};wc.cbSize=sizeof(wc);wc.hInstance=inst;wc.hCursor=LoadCursorW(nullptr,(const W*)PTR(32512));wc.hIcon=appicon;wc.hIconSm=appicon;wc.hbrBackground=nullptr;wc.lpfnWndProc=mainproc;wc.lpszClassName=L"miniGesturesController";RegisterClassExW(&wc);wc.lpfnWndProc=editorFrameProc;wc.lpszClassName=L"miniGesturesMain";RegisterClassExW(&wc);wc.lpfnWndProc=editorContentProc;wc.lpszClassName=L"miniGesturesContent";RegisterClassExW(&wc);wc.hbrBackground=nullptr;wc.lpfnWndProc=footerProc;wc.lpszClassName=L"miniGesturesFooter";RegisterClassExW(&wc);wc.lpfnWndProc=canvasproc;wc.lpszClassName=L"miniGesturesCanvas";RegisterClassExW(&wc);wc.hbrBackground=nullptr;wc.lpfnWndProc=editorProc;wc.lpszClassName=L"miniGesturesEditor";RegisterClassExW(&wc);wc.lpfnWndProc=overlayproc;wc.lpszClassName=L"miniGesturesTrail";wc.hbrBackground=nullptr;RegisterClassExW(&wc);testTarget=identity(GetForegroundWindow());mainwnd=CreateWindowExW(0,L"miniGesturesController",L"miniGestures controller",mainStyle,0x80000000,0x80000000,710,660,nullptr,nullptr,inst,nullptr);if(!mainwnd){(void)0;return 2;}if(cfg.alwaysOnTop)SetWindowPos(mainwnd,PTR(-1),0,0,0,0,1|2|16);allowShowMessage(controllerwnd);if(windowTest){if(startupReady)SetEvent(startupReady);(void)0;bool ok=uiSelfTest();if(!ok)(void)0;DestroyWindow(controllerwnd);return ok?0:4;}MONITOR mon{sizeof(mon)};H monitor=MonitorFromWindow(mainwnd,2);bool savedBox=cfg.winw>=300&&cfg.winh>=300&&cfg.winw<=100000&&cfg.winh<=100000&&cfg.winx>=-1000000&&cfg.winx<=1000000&&cfg.winy>=-1000000&&cfg.winy<=1000000;if(savedBox){auto fromRect=reinterpret_cast<H(*)(const RECT*,DWORD)>(GetProcAddress(GetModuleHandleW(L"user32.dll"),"MonitorFromRect"));RECT saved{cfg.winx,cfg.winy,cfg.winx+cfg.winw,cfg.winy+cfg.winh};if(fromRect){H m=fromRect(&saved,2);if(m)monitor=m;}}if(GetMonitorInfoW(monitor,&mon)){auto minimum=minimumOuter(mainwnd);auto r=restoreBox({cfg.winx,cfg.winy,savedBox?cfg.winw:0,savedBox?cfg.winh:0},{mon.rcWork.left,mon.rcWork.top,mon.rcWork.right-mon.rcWork.left,mon.rcWork.bottom-mon.rcWork.top},minimum.x,minimum.y,px(710),px(660));SetWindowPos(mainwnd,nullptr,r.x,r.y,r.w,r.h,4|16);}geometryReady=true;if(!lazyUI){showNativeMain(cfg.maximized&&!shutdownTest);remember();(void)0;}if(!noHooks)RegisterHotKey(controllerwnd,1,7|0x4000,0x7B);taskbarmsg=RegisterWindowMessageW(L"TaskbarCreated");tray();if(startupReady)SetEvent(startupReady);(void)0;status(invalid?tr(INVALID):L"");if(!noHooks){SetTimer(controllerwnd,93,50,nullptr);if(!windowTest&&!shutdownTest)SetTimer(controllerwnd,102,1000,nullptr);}else (void)0;if(shutdownTest)SetTimer(controllerwnd,noHooks?92:96,noHooks?300:50,nullptr);else if(firstSave||geometryDirty)SetTimer(controllerwnd,95,750,nullptr);if(invalid)MessageBoxW(mainwnd,shapeBackupFailed?et(SHAPE_BACKUP_ERROR_E):tr(INVALID),L"miniGestures",0x10);if(!shutdownTest&&!lazyUI)scheduleConflictCheck();MSG m{};while(GetMessageW(&m,nullptr,0,0)>0){PaneInteraction paneInput(m);if(settingsWnd&&m.hwnd&&GetAncestor(m.hwnd,2)==settingsWnd){if(m.message==0x100&&m.wParam==0x1b&&!settingsBusy){closeSettingsView();continue;}if(!IsDialogMessageW(settingsWnd,&m)){TranslateMessage(&m);DispatchMessageW(&m);}continue;}if(record&&(m.message==0x100||m.message==0x104)&&!screenshotShortcut((int)m.wParam,mods())){if(m.wParam==0x1b)recordend(0,0,true);else if(m.wParam!=0x10&&m.wParam!=0x11&&m.wParam!=0x12&&m.wParam!=0x5b&&m.wParam!=0x5c)recordend((int)m.wParam,mods(),false);continue;}if(m.message==0x100&&m.wParam==0x1b&&dragSource!=-1){cancelListDrag(dragOwner?dragOwner:ctrl(LIST));continue;}if(m.message==0x100&&m.wParam==0x71&&!settings&&GetForegroundWindow()==mainwnd&&!inlineRename&&m.hwnd!=ctrl(ACTLIST)){if(page==1&&(m.hwnd==ctrl(APPLIST)||m.hwnd==ctrl(APPSEARCH)))renameApp();else renameSelected();continue;}if(inlineRename&&m.hwnd==inlineRename&&m.message==0x100&&(m.wParam==13||m.wParam==0x1b)){finishInlineRename(m.wParam==13,true);continue;}if(m.message==0x100&&m.wParam==13&&GetForegroundWindow()==mainwnd&&!popup&&!record&&!inlineRename){HWND f=GetFocus();int fid=f?GetDlgCtrlID(f):-1;if(fid!=SEARCHBOX&&fid!=LIST&&fid!=ACTLIST&&fid!=TRAIN&&fid!=NEWBTN&&fid!=CATBTN&&fid!=DELBTN&&fid!=APPDEL&&fid!=TESTBTN&&fid!=SAVEBTN&&fid!=IMPORTBTN&&fid!=EXPORTBTN&&fid!=RECBTN&&fid!=KEYCLEAR&&fid!=ACTADD&&fid!=ACTUP&&fid!=ACTDOWN&&fid!=ACTDEL&&fid!=ACTREC&&fid!=BROWSEBTN&&fid!=PRESETBTN&&fid!=APPGEST&&fid!=APPBACK&&fid!=TAB0&&fid!=TAB1&&fid!=TAB2&&fid!=SETBTN){saveedit();continue;}}if(!IsDialogMessageW(mainwnd,&m)){TranslateMessage(&m);DispatchMessageW(&m);}}beginShutdown();bool stopped=joinWorkers();if(stopped&&!windowTest&&!shutdownTest)saveGeometry();if(stopped){H threads[]={hookthread,workerthread,actionthread,metathread};for(H t:threads)if(t)CloseHandle(t);H events[]={hookready,workready,actionready,metadataWake};for(H t:events)if(t)CloseHandle(t);}(void)0;return !stopped?5:testFailed?7:0;}
+static int runApplication(){shutdownSignal=CreateEventW(nullptr,1,0,nullptr);startupReady=CreateEventW(nullptr,1,0,nullptr);if(shutdownSignal&&startupReady)watchdogThread=CreateThread(nullptr,0,shutdownWatchdog,nullptr,0,nullptr);if(!resolve_gui())return 3;if(contains(GetCommandLineW(),L"--loader-self-test"))return 0;bool windowTest=contains(GetCommandLineW(),L"--window-self-test");bool parallelTest=contains(GetCommandLineW(),L"--shutdown-parallel-self-test");bool busyTest=parallelTest||contains(GetCommandLineW(),L"--shutdown-busy-self-test");bool shutdownTest=busyTest||contains(GetCommandLineW(),L"--shutdown-self-test");noHooks=contains(GetCommandLineW(),L"--no-hooks");shutdownTestMode=shutdownTest;busyTestMode=busyTest;parallelTestMode=parallelTest;testStart=GetTickCount();inst=GetModuleHandleW(nullptr);H mutex=windowTest?nullptr:CreateMutexW(nullptr,0,L"Local\\miniGestures.v1");if(!windowTest&&!mutex){MessageBoxW(nullptr,L"Cannot establish single-instance protection.",L"miniGestures",0x10);return 2;}if(mutex&&GetLastError()==183){if(shutdownTest)return 6;HWND h=FindWindowW(L"miniGesturesController",nullptr);if(!h)h=FindWindowW(L"miniGesturesMain",nullptr);if(h)PostMessageW(h,0x8011,0,0);return 0;}if(!windowTest){H legacyGuard=CreateMutexW(nullptr,0,L"Local\\StrokeliteClean.v1");if(!legacyGuard)return 2;if(GetLastError()==183){HWND oldWindow=FindWindowW(L"StrokeliteCleanMain",nullptr);if(oldWindow&&!shutdownTest)PostMessageW(oldWindow,0x8011,0,0);return shutdownTest?6:0;}}(void)0;SetProcessDpiAwarenessContext(PTR(-4));DWORD pathSize=GetModuleFileNameW(nullptr,configpath,1024);if(!pathSize||pathSize>=1024)return 3;int n=(int)pathSize;while(n&&configpath[n-1]!=L'\\')n--;if(!n||n+20>=1024)return 3;configpath[n]=0;W previousConfig[1024],originalConfig[1024];cp(previousConfig,configpath,1024);cat(previousConfig,L"Strokesmini.json",1024);cp(originalConfig,configpath,1024);cat(originalConfig,L"Strokelite.json",1024);cat(configpath,L"miniGestures.json",1024);bool missing=GetFileAttributesW(configpath)==0xffffffff;const W* loadPath=configpath;if(missing&&!windowTest&&!shutdownTest){if(GetFileAttributesW(previousConfig)!=0xffffffff)loadPath=previousConfig;else if(GetFileAttributesW(originalConfig)!=0xffffffff)loadPath=originalConfig;}bool migrating=loadPath!=configpath;bool invalid=false,legacyShapes=false,shapeBackupFailed=false;if(windowTest||shutdownTest){defaults(cfg);}else if(!loadconfig(cfg,loadPath,&legacyShapes)){defaults(cfg);if(missing&&!migrating){firstSave=true;geometryDirty=true;}else{cfg.enabled=0;invalid=true;}}else if(legacyShapes&&!migrating){if(!backupMultiShapeConfig(configpath)){cfg.enabled=0;invalid=shapeBackupFailed=true;}else geometryDirty=true;}else if(migrating){firstSave=true;geometryDirty=true;}if(!invalid&&!cfg.layoutRevision){if(cfg.winw>=300)cfg.winw=maxn(640,cfg.winw-px(100));cfg.layoutRevision=1;geometryDirty=true;}configValid=!invalid;lazyUI=cfg.startTray&&!contains(GetCommandLineW(),L"--restart-wait")&&!windowTest&&!shutdownTest&&!noHooks&&!invalid;(void)0;applyTheme();appicon=LoadIconW(inst,(const W*)PTR(1));if(!appicon)appicon=LoadIconW(nullptr,(const W*)PTR(32512));pausedIcon=LoadIconW(inst,(const W*)PTR(2));updateIcon=LoadIconW(inst,(const W*)PTR(3));pausedUpdateIcon=LoadIconW(inst,(const W*)PTR(4));WC wc{};wc.cbSize=sizeof(wc);wc.hInstance=inst;wc.hCursor=LoadCursorW(nullptr,(const W*)PTR(32512));wc.hIcon=appicon;wc.hIconSm=appicon;wc.hbrBackground=nullptr;wc.lpfnWndProc=mainproc;wc.lpszClassName=L"miniGesturesController";RegisterClassExW(&wc);wc.lpfnWndProc=editorContentProc;wc.lpszClassName=L"miniGesturesContent";RegisterClassExW(&wc);wc.hbrBackground=nullptr;wc.lpfnWndProc=footerProc;wc.lpszClassName=L"miniGesturesFooter";RegisterClassExW(&wc);wc.lpfnWndProc=canvasproc;wc.lpszClassName=L"miniGesturesCanvas";RegisterClassExW(&wc);wc.hbrBackground=nullptr;wc.lpfnWndProc=editorProc;wc.lpszClassName=L"miniGesturesEditor";RegisterClassExW(&wc);wc.lpfnWndProc=overlayproc;wc.lpszClassName=L"miniGesturesTrail";wc.hbrBackground=nullptr;RegisterClassExW(&wc);testTarget=identity(GetForegroundWindow());mainwnd=CreateWindowExW(0,L"miniGesturesController",L"miniGestures",mainStyle,0x80000000,0x80000000,710,660,nullptr,nullptr,inst,nullptr);if(!mainwnd){(void)0;return 2;}if(cfg.alwaysOnTop)SetWindowPos(mainwnd,PTR(-1),0,0,0,0,1|2|16);allowShowMessage(controllerwnd);if(windowTest){if(startupReady)SetEvent(startupReady);(void)0;bool ok=uiSelfTest();if(!ok)(void)0;DestroyWindow(controllerwnd);return ok?0:4;}MONITOR mon{sizeof(mon)};H monitor=MonitorFromWindow(mainwnd,2);bool savedBox=cfg.winw>=300&&cfg.winh>=300&&cfg.winw<=100000&&cfg.winh<=100000&&cfg.winx>=-1000000&&cfg.winx<=1000000&&cfg.winy>=-1000000&&cfg.winy<=1000000;if(savedBox){auto fromRect=reinterpret_cast<H(*)(const RECT*,DWORD)>(GetProcAddress(GetModuleHandleW(L"user32.dll"),"MonitorFromRect"));RECT saved{cfg.winx,cfg.winy,cfg.winx+cfg.winw,cfg.winy+cfg.winh};if(fromRect){H m=fromRect(&saved,2);if(m)monitor=m;}}if(GetMonitorInfoW(monitor,&mon)){auto minimum=minimumOuter(mainwnd);auto r=restoreBox({cfg.winx,cfg.winy,savedBox?cfg.winw:0,savedBox?cfg.winh:0},{mon.rcWork.left,mon.rcWork.top,mon.rcWork.right-mon.rcWork.left,mon.rcWork.bottom-mon.rcWork.top},minimum.x,minimum.y,px(710),px(660));SetWindowPos(mainwnd,nullptr,r.x,r.y,r.w,r.h,4|16);}geometryReady=true;if(!lazyUI){showNativeMain(cfg.maximized&&!shutdownTest);remember();(void)0;}if(!noHooks)RegisterHotKey(controllerwnd,1,7|0x4000,0x7B);taskbarmsg=RegisterWindowMessageW(L"TaskbarCreated");tray();if(startupReady)SetEvent(startupReady);(void)0;status(invalid?tr(INVALID):L"");if(!noHooks){SetTimer(controllerwnd,93,50,nullptr);if(!windowTest&&!shutdownTest)SetTimer(controllerwnd,102,1000,nullptr);}else (void)0;if(shutdownTest)SetTimer(controllerwnd,noHooks?92:96,noHooks?300:50,nullptr);else if(firstSave||geometryDirty)SetTimer(controllerwnd,95,750,nullptr);if(invalid)MessageBoxW(mainwnd,shapeBackupFailed?et(SHAPE_BACKUP_ERROR_E):tr(INVALID),L"miniGestures",0x10);if(!shutdownTest&&!lazyUI)scheduleConflictCheck();MSG m{};while(GetMessageW(&m,nullptr,0,0)>0){PaneInteraction paneInput(m);if(settingsWnd&&m.hwnd&&GetAncestor(m.hwnd,2)==settingsWnd){if(m.message==0x100&&m.wParam==0x1b&&!settingsBusy){closeSettingsView();continue;}if(!IsDialogMessageW(settingsWnd,&m)){TranslateMessage(&m);DispatchMessageW(&m);}continue;}if(record&&(m.message==0x100||m.message==0x104)&&!screenshotShortcut((int)m.wParam,mods())){if(m.wParam==0x1b)recordend(0,0,true);else if(m.wParam!=0x10&&m.wParam!=0x11&&m.wParam!=0x12&&m.wParam!=0x5b&&m.wParam!=0x5c)recordend((int)m.wParam,mods(),false);continue;}if(m.message==0x100&&m.wParam==0x1b&&dragSource!=-1){cancelListDrag(dragOwner?dragOwner:ctrl(LIST));continue;}if(m.message==0x100&&m.wParam==0x71&&!settings&&GetForegroundWindow()==mainwnd&&!inlineRename&&m.hwnd!=ctrl(ACTLIST)){if(page==1&&(m.hwnd==ctrl(APPLIST)||m.hwnd==ctrl(APPSEARCH)))renameApp();else renameSelected();continue;}if(inlineRename&&m.hwnd==inlineRename&&m.message==0x100&&(m.wParam==13||m.wParam==0x1b)){finishInlineRename(m.wParam==13,true);continue;}if(m.message==0x100&&m.wParam==13&&GetForegroundWindow()==mainwnd&&!popup&&!record&&!inlineRename){HWND f=GetFocus();int fid=f?GetDlgCtrlID(f):-1;if(fid!=SEARCHBOX&&fid!=LIST&&fid!=ACTLIST&&fid!=TRAIN&&fid!=NEWBTN&&fid!=CATBTN&&fid!=DELBTN&&fid!=APPDEL&&fid!=TESTBTN&&fid!=SAVEBTN&&fid!=IMPORTBTN&&fid!=EXPORTBTN&&fid!=RECBTN&&fid!=KEYCLEAR&&fid!=ACTADD&&fid!=ACTUP&&fid!=ACTDOWN&&fid!=ACTDEL&&fid!=ACTREC&&fid!=BROWSEBTN&&fid!=PRESETBTN&&fid!=APPGEST&&fid!=APPBACK&&fid!=TAB0&&fid!=TAB1&&fid!=TAB2&&fid!=SETBTN){saveedit();continue;}}if(!IsDialogMessageW(mainwnd,&m)){TranslateMessage(&m);DispatchMessageW(&m);}}beginShutdown();bool stopped=joinWorkers();if(stopped&&!windowTest&&!shutdownTest)saveGeometry();if(stopped){H threads[]={hookthread,workerthread,actionthread,metathread};for(H t:threads)if(t)CloseHandle(t);H events[]={hookready,workready,actionready,metadataWake};for(H t:events)if(t)CloseHandle(t);}(void)0;return !stopped?5:testFailed?7:0;}
 
 // Native Windows host owns preflight and process lifetime.
 extern "C" DWORD __stdcall NativeStart(void*) {return (DWORD)runApplication();}
