@@ -4,7 +4,7 @@
 #include "remote_input.hpp"
 // Hook thread owns capture state. A separate worker owns recognition/actions.
 // controllerwnd is stable until process shutdown; mainwnd is UI-thread only.
-static HWND controllerwnd,mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid,replaytid;static HANDLE hookthread,workerthread,actionthread,replaythread,hookready,workready,actionready,replayready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0,trayMenuActive=0;
+static HWND controllerwnd,mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid;static HANDLE hookthread,workerthread,actionthread,hookready,workready,actionready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0,trayMenuActive=0;
 static H engineStop,metadataWake;static HANDLE metathread;static DWORD metatid;
 static volatile long rulesActive=0,metadataPending=0,pendingJobs=0,actionStarted=0;
 static constexpr UINT MSG_METADATA=0x8008,MSG_ENGINE_READY=0x800a,MSG_REFRESH_HOOKS=0x800b;
@@ -164,26 +164,28 @@ current.cursor=metadataTarget(WindowFromPoint(p),paths,next);auto fg=identity(Ge
   )?100:0xffffffff);if(r==0||r==0xffffffff)break;
  }return 0;
 }
-// The hook must remain able to receive injected-event callbacks even
-// while SendInput is running. Use a separate input-only message queue;
-// never execute injection on the hook, recognition or action thread.
+// Preserve event ordering: the replay message is consumed by the hook's
+// message loop only after the physical release callback has returned.
+// Posting directly to an independently scheduled worker can race that
+// release. Never call SendInput from WH_MOUSE_LL itself.
 static constexpr UINT MSG_REPLAY_CLICK=0x800d,MSG_RELAY_JOB=0x800f;
 static bool replay(int button){
- if(button<1||button>5||!running||!replaytid)return false;
+ if(button<1||button>5||!running||!hooktid)return false;
  DWORD tick=GetTickCount();
  MG_LOG("click replay queued button enqueueTick",button,tick);
- return PostThreadMessageW(replaytid,MSG_REPLAY_CLICK,(WP)button,(LP)tick)!=0;
+ return PostThreadMessageW(hooktid,MSG_REPLAY_CLICK,(WP)button,(LP)tick)!=0;
 }
-static DWORD CB replaymain(void*){
- MSG m{};PeekMessageW(&m,nullptr,0,0,0);SetEvent(replayready);
- while(waitMessage(m)){
-  if(m.message!=MSG_REPLAY_CLICK||!running||m.wParam<1||m.wParam>5)continue;
-  DWORD before=GetTickCount();
-  MG_LOG("click replay dispatch button queueMs",m.wParam,before-(DWORD)m.lParam);
-  bool ok=click((int)m.wParam);
-  MG_LOG("click replay completion button success injectionMs",m.wParam,ok,GetTickCount()-before);
- }
- return 0;
+static void replayQueuedClick(WP button,LP tick){
+ if(!running||button<1||button>5)return;
+ DWORD before=GetTickCount();
+ MG_LOG("click replay dispatch button queueMs",button,before-(DWORD)tick);
+ bool ok=click((int)button);
+#ifdef _WIN32
+ DWORD error=ok?0:GetLastError();
+#else
+ DWORD error=0;
+#endif
+ MG_LOG("click replay completion button success injectionMs error",button,ok,GetTickCount()-before,error);
 }
 
 #include "gesture_match.hpp"
@@ -333,6 +335,7 @@ static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||s
 static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId();configureHooks();SetEvent(hookready);PostMessageW(controllerwnd,MSG_ENGINE_READY,0,0);
  while(waitMessage(m)){if(m.message==MSG_CONFIG){Snapshot* next=(Snapshot*)m.lParam;Snapshot* old=live;live=next;release(old);long was=hookok;configureHooks();if(was!=hookok)PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}
  else if(m.message==0x113&&!m.hwnd&&captureTimer&&m.wParam==captureTimer){if(!cap.s||cap.used)stopCaptureTimer();else expireCapture(GetTickCount());}
+ else if(m.message==MSG_REPLAY_CLICK){replayQueuedClick(m.wParam,m.lParam);}
  else if(m.message==MSG_RELAY_JOB){relayJob((Job*)m.lParam);}
  else if(m.message==MSG_REFRESH_HOOKS){configureHooks();}else if(m.message==MSG_REARM){if(!cap.button&&!blocked&&mousehook){UnhookWindowsHookEx(mousehook);mousehook=nullptr;configureHooks();(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}}
  else if(m.message==MSG_WARM_METADATA){acceptWarmMetadata((WarmMetadata*)m.lParam);}
