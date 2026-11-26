@@ -360,7 +360,7 @@ static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=init
  else{TranslateMessage(&m);DispatchMessageW(&m);}}
  if(mousehook)UnhookWindowsHookEx(mousehook);if(keyhook)UnhookWindowsHookEx(keyhook);if(diagkeyhook)UnhookWindowsHookEx(diagkeyhook);diagkeyhook=nullptr;InterlockedExchange(&hookok,0);InterlockedExchange(&rulesActive,0);resetcap();release(live);live=nullptr;if(running){InterlockedExchange(&mouseExpected,0);InterlockedExchange(&keyboardExpected,0);(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}while(PeekMessageW(&m,nullptr,0,0,1)){if(m.message==MSG_CONFIG)release((Snapshot*)m.lParam);else if(m.message==MSG_METADATA||m.message==MSG_WARM_METADATA)freep((void*)m.lParam);else if(m.message==MSG_RELAY_JOB)finishJob((Job*)m.lParam);}return 0;}
 struct Result{int ok,score,conflictId,otherId;W name[196];Result* next;};
-static void resultGestureName(W* out,int cap,const RuntimeConfig&c,const Gesture&g){
+static void resultGestureName(W* out,int cap,const RuntimeConfig&c,const RuntimeGesture&g){
  out[0]=0;if(g.profile)for(int i=0;i<c.na;i++)if(c.a[i].id==g.profile){if(*c.a[i].name){cp(out,c.a[i].name,cap);cat(out,L" - ",cap);}break;}cat(out,g.name,cap);
 }
 static Result* recognitionNotice(const RuntimeConfig&c,int idx,int score){if(!c.showGestureNames||idx<0||idx>=c.ng)return nullptr;auto*r=(Result*)alloc(sizeof(Result));if(r){r->ok=2;r->score=score;resultGestureName(r->name,196,c,c.g[idx]);}return r;}
@@ -379,7 +379,7 @@ struct ParallelStep{ParallelBatch* batch;Act a;bool ok;};
 struct ParallelBatch{volatile long refs;H gate;Target target;ParallelStep steps[MAXA];};
 static void releaseBatch(ParallelBatch*b){if(InterlockedExchangeAdd(&b->refs,-1)==1){CloseHandle(b->gate);freep(b);}}
 static DWORD CB parallelStep(void*p){auto&s=*(ParallelStep*)p;auto*b=s.batch;WaitForSingleObject(b->gate,0xffffffff);MG_LOG("parallel action type target pid",s.a.type,(up)b->target.hwnd,b->target.pid);s.ok=running&&execute(s.a,b->target);MG_LOG("parallel action result type success",s.a.type,s.ok);releaseBatch(b);return 0;}
-static bool executeSteps(const Gesture&g,const Target&t){if(!g.parallel){for(int i=0;i<g.steps;i++){MG_LOG("action step index type target pid",i,g.actions[i].type,(up)t.hwnd,t.pid);bool ok=running&&execute(g.actions[i],t,g.steps>1);MG_LOG("action step result index type success",i,g.actions[i].type,ok);if(!ok)return false;}return true;}
+static bool executeSteps(const RuntimeGesture&g,const Target&t){if(!g.parallel){for(int i=0;i<g.steps;i++){MG_LOG("action step index type target pid",i,g.actions[i].type,(up)t.hwnd,t.pid);bool ok=running&&execute(g.actions[i],t,g.steps>1);MG_LOG("action step result index type success",i,g.actions[i].type,ok);if(!ok)return false;}return true;}
  auto*b=(ParallelBatch*)alloc(sizeof(ParallelBatch));if(!b)return false;b->refs=1;b->gate=CreateEventW(nullptr,1,0,nullptr);if(!b->gate){freep(b);return false;}b->target=t;H threads[MAXA]{};bool ok=true;
  for(int i=0;i<g.steps;i++){b->steps[i].batch=b;b->steps[i].a=g.actions[i];InterlockedIncrement(&b->refs);threads[i]=CreateThread(nullptr,0,parallelStep,&b->steps[i],0,nullptr);if(!threads[i]){releaseBatch(b);ok=false;}}
  SetEvent(b->gate);for(int i=0;i<g.steps;i++)if(threads[i]){H wait[]={engineStop,threads[i]};DWORD r=WaitForMultipleObjects(2,wait,0,0xffffffff);if(r!=1||!b->steps[i].ok)ok=false;CloseHandle(threads[i]);}releaseBatch(b);return ok;}

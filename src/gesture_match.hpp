@@ -23,7 +23,7 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
  int best=-1,bscore=-1,second=-1,secondIndex=-1;long long bestRank=-1;
  for(int pass=0;pass<2;pass++){
   int wanted=pass==0?pr:0;if(pass==1&&(!pr||!inherits(c,pr)))break;
-  BindingRange range(*j.s,j.button,j.mods,j.hotkey);
+  BindingRange range(*j.s,j.button,j.mods,j.hotkey,j.hotkey?-1:j.trigger);
   for(int i=range.first;range.valid(i);i=range.advance(i)){
    auto&g=c.g[i];if(!g.enabled||g.profile!=wanted||!g.steps)continue;
    if(pass==1&&blockedGlobal(c,pr,g.id))continue;
