@@ -6,7 +6,7 @@
 #include "templates.hpp"
 #include "window_tray.hpp"
 #include "trail_raster.hpp"
-static Config cfg;static Gesture edit;static int selectedShape=0,shapeAnchor=0;static unsigned shapeSelection=0;static Rule rule;static int page=0,appId=0,selected=-1,ruleIndex=-1,actIndex=0,ruleEdit=0,settings=0,record=0;static int hkregistered[256][16];static HWND controls[164],canvas;static int dpi=96;static HFONT font,tabBold;static HBRUSH white,side,blue;static HINSTANCE inst;static HICON appicon,pausedIcon,updateIcon,pausedUpdateIcon;static bool updateAvailable=false;static bool geometryReady=false,trayDoubleRelease=false,trayAdded=false;static HICON trayCurrentIcon=nullptr;static NID nid;static UINT taskbarmsg;static bool loading=false,dirty=false,exiting=false,configValid=true;static P drawn[maxDrawingPoints];static int drawnN=0,drawdrag=0;static P trail[maxDrawingPoints];static int trailN=0;static Target testTarget;static W last[256];static int actionVk=0,actionMods=0;static PROC recordOld;static bool lazyUI=false,noHooks=false,geometryDirty=false,firstSave=false,testFailed=false,shutdownTestMode=false,busyTestMode=false,parallelTestMode=false;static DWORD testStart;static H shutdownSignal,startupReady,watchdogThread;static DWORD startupDeadline;static int editLineHeight,editTextHeight;
+static Config cfg;static Gesture edit;static int selectedShape=-1,shapeAnchor=-1;static unsigned shapeSelection=0;static Rule rule;static int page=0,appId=0,selected=-1,ruleIndex=-1,actIndex=0,ruleEdit=0,settings=0,record=0;static int hkregistered[256][16];static HWND controls[164],canvas;static int dpi=96;static HFONT font,tabBold;static HBRUSH white,side,blue;static HINSTANCE inst;static HICON appicon,pausedIcon,updateIcon,pausedUpdateIcon;static bool updateAvailable=false;static bool geometryReady=false,trayDoubleRelease=false,trayAdded=false;static HICON trayCurrentIcon=nullptr;static NID nid;static UINT taskbarmsg;static bool loading=false,dirty=false,exiting=false,configValid=true;static P drawn[maxDrawingPoints];static int drawnN=0,drawdrag=0;static P trail[maxDrawingPoints];static int trailN=0;static Target testTarget;static W last[256];static int actionVk=0,actionMods=0;static PROC recordOld;static bool lazyUI=false,noHooks=false,geometryDirty=false,firstSave=false,testFailed=false,shutdownTestMode=false,busyTestMode=false,parallelTestMode=false;static DWORD testStart;static H shutdownSignal,startupReady,watchdogThread;static DWORD startupDeadline;static int editLineHeight,editTextHeight;
 static const W* tr(int id){return strings[id][cfg.lang];}
 enum C{TAB0=10,TAB1,TAB2,SETBTN,TOGGLE,IMPORTBTN,EXPORTBTN,SEARCHBOX,LIST,NEWBTN,CATBTN,DELBTN,DUPBTN,APPGEST,NAMEBOX,FOLDERBOX,ENABLEBOX,BUTTONBOX,MODBOX,TRIGGERBOX,KEYBOX,RECBTN,KEYCLEAR,SENSEBOX,TRAIN,ADDSAMPLE,RESETTRAIN,ACTLIST,ACTCOMBO,ARGBOX,ACTADD,ACTDEL,ACTUP,ACTDOWN,ACTREC,TESTBTN,SAVEBTN,EXEBOX,CLASSBOX,TITLEBOX,PRIORITYBOX,INHERITBOX,MODEBOX,BROWSEBTN,LANGBOX,THRESHBOX,OVERBOX,CLOSEBOX,STARTBOX,UNUSED_CONTROL,STATUSBOX,HEAD,LABSEARCH,LABNAME,LABFOLDER,LABBUTTON,LABMOD,LABTRIGGER,LABKEY,LABSENSE,LABTRAIN,LABACTION,LABPARAM,LABEXE,LABCLASS,LABTITLE,LABPRIORITY,LABMODE,LABLANG,LABTHRESH,LABSELECT,ACTHINT,APPBACK,PRESETBTN,PICKBTN,EXECBOX,LABEXEC,LABSENSHELP,CONFIRMBOX,VERSIONBOX,STARTWINBOX,ADMINBOX,ADMINHELP,ADMINSTATUS,ADDITIONALHEADER,THEMEBOX,LABTHEME,TOPBOX, APPLIST=105,APPNEW,APPCAT,APPEDIT,APPDEL,APPHEAD,GESTHEAD,EDITORHEAD,APPSEARCH,TRAILCOLOR,TRAILWIDTH,LABTRAILCOLOR,LABTRAILWIDTH,TRAILPICK,TASKBARBOX,TRAILRESET,EXPATHBOX,LABEXPATH,CANCELCREATE=148,SELECTOR_ENABLED=150,SELECTOR_INHERIT=151,FULLSCREENBOX=152,INDICATORBOX=153,CAPTUREBTN=154,UPDATEBOX=155,LABUPDATE=156,UPDATEBTN=157,UPDATEVERSIONS=158,INDICATORSECONDS=159,LABINDICATORSECONDS=149,LABGESTURETIMEOUT=160,GESTURETIMEOUT=161};
 static HWND ctrl(int id){return controls[id];}static int px(int x){return x*dpi/96;}static void txt(int id,const W*s){if(ctrl(id))SetWindowTextW(ctrl(id),s);}static void get(int id,W*b,int cap){GetWindowTextW(ctrl(id),b,cap);}static int selection(int id){return (int)SendMessageW(ctrl(id),0x147,0,0);}static void select(int id,int n){SendMessageW(ctrl(id),0x14e,n,0);}static int ls(int id){return (int)SendMessageW(ctrl(id),0x188,0,0);}static void sl(int id,int n){SendMessageW(ctrl(id),0x186,n,0);}static int checked(int id){return (int)SendMessageW(ctrl(id),0xf0,0,0)==1;}static void check(int id,int on){SendMessageW(ctrl(id),0xf1,on?1:0,0);}static void combo(int id,const W*s){SendMessageW(ctrl(id),0x143,0,(LP)s);}static void listadd(int id,const W*s,int data){int x=(int)SendMessageW(ctrl(id),0x180,0,(LP)s);if(x>=0)SendMessageW(ctrl(id),0x19a,x,data);}static int listdata(int id){int n=ls(id);return n<0?-1:(int)SendMessageW(ctrl(id),0x199,n,0);}static void listreset(int id){SendMessageW(ctrl(id),0x184,0,0);}static void comboclear(int id){SendMessageW(ctrl(id),0x14b,0,0);}static void inttext(int id,int n){W b[24];number(b,n);txt(id,b);}static int getnum(int id){W b[24];get(id,b,24);return num(b);}
@@ -33,7 +33,7 @@ static int modalCreateButton=0;static bool dialogOwnerLimited=false;static bool 
 static int appCategory=-1;static int categorySelection=-1;static HWND popup=nullptr,drawCanvas=nullptr;static HWND settingsWnd=nullptr;static HWND settingsControls[164]{};static bool settingsLoading=false;static void openSettingsView();static void closeSettingsView();static void updateSettingsTheme();
 static void updateTrayIcon();
 static void indicatorThemeChanged();
-static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.4";
+static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.5";
 static void failedGestureLabel(W* b,int cap,const W* name,int score){
  static const W* const failed[]={L"Gesture recognition failed",L"Falha no reconhecimento do gesto",L"Error de reconocimiento del gesto",L"Échec de la reconnaissance du geste",L"Gestenerkennung fehlgeschlagen",L"Riconoscimento del gesto non riuscito"};
  static const W* const similar[]={L" — Similar to ",L" — Semelhante a ",L" — Similar a ",L" — Similaire à ",L" — Ähnlich wie ",L" — Simile a "};
@@ -241,12 +241,16 @@ static void rebuildlist(){loading=true;rebuildApps();bool redraw=IsWindowVisible
 static void actionfields(){loading=true;listreset(ACTLIST);for(int i=0;i<edit.steps;i++){W b[320];number(b,i+1);cat(b,L". ",320);cat(b,defs[clamp(edit.actions[i].type,0,ACTIONS-1)].name[cfg.lang],320);if(*edit.actions[i].arg){cat(b,L" — ",320);if(edit.actions[i].type==0){int vk,m;W friendly[128];if(parsekey(edit.actions[i].arg,vk,m)){keyname(vk,m,friendly,128);cat(b,friendly,320);}else cat(b,edit.actions[i].arg,320);}else cat(b,edit.actions[i].arg,320);}listadd(ACTLIST,b,i);}actIndex=clamp(actIndex,0,maxn(0,edit.steps-1));if(edit.steps){sl(ACTLIST,actIndex);int a=clamp(edit.actions[actIndex].type,0,ACTIONS-1);EnableWindow(ctrl(ACTREC),a==0||program_parameter::isProgram(a));txt(ACTREC,program_parameter::isProgram(a)?tr(BROWSE):tr(RECORD));SendMessageW(ctrl(ARGBOX),0xcf,a==0,0);if(a==0){int vk,m;W friendly[128];if(parsekey(edit.actions[actIndex].arg,vk,m)){keyname(vk,m,friendly,128);txt(ARGBOX,friendly);}else txt(ARGBOX,edit.actions[actIndex].arg);txt(ACTHINT,L"");}else{txt(ARGBOX,edit.actions[actIndex].arg);txt(ACTHINT,defs[a].hint);}}else{EnableWindow(ctrl(ACTREC),0);SendMessageW(ctrl(ARGBOX),0xcf,0,0);txt(ARGBOX,L"");txt(ACTHINT,L"");}loading=false;}
 static void saveactionfields(){if(actIndex>=0&&actIndex<edit.steps&&edit.actions[actIndex].type!=0){get(ARGBOX,edit.actions[actIndex].arg,256);}}
 static void refreshShapeCards(){
- selectedShape=clamp(selectedShape,0,maxn(0,edit.count-1));
- shapeAnchor=clamp(shapeAnchor,0,maxn(0,edit.count-1));
+ selectedShape=clamp(selectedShape,-1,edit.count-1);
+ shapeAnchor=clamp(shapeAnchor,-1,edit.count-1);
  shapeSelection&=mgcards::all(edit.count);
  if(canvas)InvalidateRect(canvas,nullptr,0);
 }
+static void clearShapeSelection(){
+ selectedShape=shapeAnchor=-1;shapeSelection=0;refreshShapeCards();
+}
 static void selectSingleShape(int index){
+ if(!edit.count){clearShapeSelection();return;}
  selectedShape=shapeAnchor=clamp(index,0,maxn(0,edit.count-1));
  shapeSelection=edit.count?mgcards::bit(selectedShape):0;
  refreshShapeCards();
@@ -261,7 +265,7 @@ static void removeSelectedShapes(){
  }
  edit.count=keep;selectSingleShape(firstRemoved);
 }
-static void editfields(){loading=true;drawnN=0;if(gstview()){selectSingleShape(0);txt(NAMEBOX,edit.name);check(ENABLEBOX,edit.enabled);select(BUTTONBOX,edit.trigger==6?1:edit.button);EnableWindow(ctrl(BUTTONBOX),edit.trigger!=6);select(MODBOX,edit.mods);select(TRIGGERBOX,edit.trigger);W b[128];keyname(edit.hotkey,edit.hotmods,b,128);txt(KEYBOX,b);select(EXECBOX,edit.parallel);actIndex=0;actionfields();InvalidateRect(canvas,nullptr,0);}else{txt(NAMEBOX,rule.name);check(ENABLEBOX,rule.enabled);txt(EXEBOX,rule.exe);txt(EXPATHBOX,rule.path);txt(CLASSBOX,rule.cls);txt(TITLEBOX,rule.title);check(INHERITBOX,rule.inherit);select(MODEBOX,rule.mode);}loading=false;}
+static void editfields(){loading=true;drawnN=0;if(gstview()){clearShapeSelection();txt(NAMEBOX,edit.name);check(ENABLEBOX,edit.enabled);select(BUTTONBOX,edit.trigger==6?1:edit.button);EnableWindow(ctrl(BUTTONBOX),edit.trigger!=6);select(MODBOX,edit.mods);select(TRIGGERBOX,edit.trigger);W b[128];keyname(edit.hotkey,edit.hotmods,b,128);txt(KEYBOX,b);select(EXECBOX,edit.parallel);actIndex=0;actionfields();InvalidateRect(canvas,nullptr,0);}else{txt(NAMEBOX,rule.name);check(ENABLEBOX,rule.enabled);txt(EXEBOX,rule.exe);txt(EXPATHBOX,rule.path);txt(CLASSBOX,rule.cls);txt(TITLEBOX,rule.title);check(INHERITBOX,rule.inherit);select(MODEBOX,rule.mode);}loading=false;}
 static void refresh(){applyTheme();labels();rebuildlist();if(!settings&&page==2&&listdata(LIST)==-1){ruleIndex=-1;categorySelection=-1;}editfields();relayout();refreshSearchCue();for(int id=TAB0;id<=TAB2;id++)InvalidateRect(ctrl(id),nullptr,0);InvalidateRect(ctrl(SETBTN),nullptr,0);status(L"");}
 static void hotkeys(){/* Keyboard hook resolves application/exclusion context before consuming a shortcut. */}
 static bool persist(){if(!saveconfig(cfg,configpath)){MessageBoxW(mainwnd,tr(STATUS_ERROR),L"miniGestures",0x10);return false;}configValid=true;geometryDirty=false;firstSave=false;publish(cfg);hotkeys();status(tr(STATUS_SAVED));return true;}
@@ -361,7 +365,7 @@ static LR CB canvasproc(HWND h,UINT m,WP w,LP l){
    if(!shapeDrag.marquee){
     int hit=shapeDrag.hit;
     shapeSelection=mgcards::click(shapeDrag.base,shapeAnchor,hit,shapeDrag.ctrl,shapeDrag.shift)&mgcards::all(edit.count);
-    if(hit>=0){selectedShape=hit;if(!shapeDrag.shift)shapeAnchor=hit;}
+    if(hit>=0){selectedShape=hit;if(!shapeDrag.shift||shapeAnchor<0)shapeAnchor=hit;}else if(!shapeDrag.ctrl&&!shapeDrag.shift){selectedShape=shapeAnchor=-1;}
    }else if(shapeSelection){
     // Prefer the first selected card as the anchor for a subsequent Shift range.
     for(int i=0;i<edit.count;i++)if(shapeSelection&mgcards::bit(i)){selectedShape=shapeAnchor=i;break;}
@@ -375,9 +379,9 @@ static LR CB canvasproc(HWND h,UINT m,WP w,LP l){
   if(m==0x87)return 1; // DLGC_WANTARROWS; Tab navigation remains native.
   if(m==0x100&&edit.count>0){
    RECT r{};GetClientRect(h,&r);auto grid=shapeCardGrid(r);int next=selectedShape;
-   switch(w){case 0x25:--next;break;case 0x27:++next;break;case 0x26:next-=grid.columns;break;case 0x28:next+=grid.columns;break;case 0x24:next=0;break;case 0x23:next=edit.count-1;break;default:return DefWindowProcW(h,m,w,l);}
+   switch(w){case 0x25:next=next<0?0:next-1;break;case 0x27:next=next<0?0:next+1;break;case 0x26:next=next<0?0:next-grid.columns;break;case 0x28:next=next<0?0:next+grid.columns;break;case 0x24:next=0;break;case 0x23:next=edit.count-1;break;default:return DefWindowProcW(h,m,w,l);}
    next=clamp(next,0,edit.count-1);
-   if(GetAsyncKeyState(0x10)&0x8000){selectedShape=next;shapeSelection=mgcards::range(shapeAnchor,next)&mgcards::all(edit.count);refreshShapeCards();}
+   if((GetAsyncKeyState(0x10)&0x8000)&&shapeAnchor>=0){selectedShape=next;shapeSelection=mgcards::range(shapeAnchor,next)&mgcards::all(edit.count);refreshShapeCards();}
    else selectSingleShape(next);
    return 0;
   }
@@ -634,6 +638,7 @@ static bool uiSelfTest(){
  {P sample[N],third[N],fourth[N];if(!compass(0,1,sample)||!compass(1,2,third)||!compass(3,4,fourth))return false;
   appendEditorShape(sample);appendEditorShape(third);appendEditorShape(fourth);
   RECT r{};GetClientRect(canvas,&r);auto grid=shapeCardGrid(r);if(grid.count!=4||shapeSelection!=8)return false;
+  editfields();if(shapeSelection||selectedShape!=-1||shapeAnchor!=-1)return false;
   auto center=[&](int i){auto q=grid.card(i);return (LP)((u16)((q.left+q.right)/2)|((u32)(u16)((q.top+q.bottom)/2)<<16));};
   auto click=[&](int i,WP mods){SendMessageW(canvas,0x201,mods|1,center(i));SendMessageW(canvas,0x202,mods,center(i));};
   click(0,0);if(shapeSelection!=1)return false;
@@ -645,7 +650,7 @@ static bool uiSelfTest(){
   click(0,0);click(2,8);command(RESETTRAIN,0);
   if(edit.count!=2||!sameShape(edit.samples[0],sample)||!sameShape(edit.samples[1],fourth))return false;
   shapeSelection=mgcards::all(edit.count);command(RESETTRAIN,0);if(edit.count||shapeSelection)return false;
-  edit=cfg.g[selected];selectSingleShape(0);
+  edit=cfg.g[selected];editfields();if(shapeSelection||selectedShape!=-1||shapeAnchor!=-1)return false;
  }
  cfg.categories[cat].collapsed=1;rebuildlist();if(SendMessageW(ctrl(LIST),0x18b,0,0)!=cfg.ng)return false;cfg.categories[cat].collapsed=0;rebuildlist();if(SendMessageW(ctrl(LIST),0x18b,0,0)!=cfg.ng+1)return false;
  for(int lang=0;lang<6;lang++){cfg.lang=lang;Placement fixedTabs[3]{};for(int pg=0;pg<3;pg++){

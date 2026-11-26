@@ -28,7 +28,7 @@ struct Line{char b[512];unsigned n=0;void add(const char*s){while(*s&&n<sizeof(b
 static bool writeAll(H h,const void*p,DWORD n){DWORD done=0;return WriteFile(h,p,n,&done,nullptr)&&done==n;}
 static bool save(const W* path){if(!pending())return false;H file=CreateFileW(path,0x40000000,0,nullptr,2,0x80,nullptr);if(file==PTR(-1))return false;char buffer[32768];unsigned used=0;bool ok=true;
  auto append=[&](const Line& l){if(!ok)return;if(used+l.n>sizeof(buffer)){ok=writeAll(file,buffer,used);used=0;}if(ok){memcpy(buffer+used,l.b,l.n);used+=l.n;}};
- Line intro;intro.add("miniGestures 2.0.4 diagnostic capture\r\nValues are hexadecimal, in the order named by each event. Time is milliseconds from capture start. No physical keystrokes, titles, URLs, or typed text.\r\nRecords: ");intro.dec(count);intro.add("; overwritten: ");intro.dec(overwritten);intro.add("; busy drops: ");intro.dec((unsigned)InterlockedExchangeAdd(&contention,0));intro.add("\r\n");append(intro);
+ Line intro;intro.add("miniGestures 2.0.5 diagnostic capture\r\nValues are hexadecimal, in the order named by each event. Time is milliseconds from capture start. No physical keystrokes, titles, URLs, or typed text.\r\nRecords: ");intro.dec(count);intro.add("; overwritten: ");intro.dec(overwritten);intro.add("; busy drops: ");intro.dec((unsigned)InterlockedExchangeAdd(&contention,0));intro.add("\r\n");append(intro);
  for(unsigned i=0;i<count&&ok;i++){auto&r=records[(head+capacity-count+i)%capacity];Line l;l.dec(r.tick);l.add(" ms tid=");l.dec(r.tid);l.add(" ");l.add(r.stage);l.add(" | ");for(int j=0;j<8;j++){if(j)l.add(" ");l.hex(r.v[j]);}l.add("\r\n");append(l);}
  if(ok&&used)ok=writeAll(file,buffer,used);if(ok)ok=FlushFileBuffers(file)!=0;CloseHandle(file);return ok;
 }
