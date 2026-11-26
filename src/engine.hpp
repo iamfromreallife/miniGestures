@@ -224,7 +224,7 @@ static inline bool isup(UINT m){return m==0x202||m==0x205||m==0x208||m==0x20c;}
 // and modifier combination. The common global-only path never scans gestures.
 static int captureMask(const Snapshot& snap,const Target&t,bool deferred,int b,int mod){
  const auto&c=snap.c;if(!snap.rules||deferred)return snap.buttons[b][mod];
- int pr=profile(c,t),mask=0;bool inherited=inherits(c,pr),wheelExcluded=(snap.buttons[b][mod]&0x1e)&&excluded(c,t,4),rockerExcluded=(snap.buttons[b][mod]&0xe0)&&excluded(c,t,3);
+ int pr=profile(c,t),mask=0;bool inherited=inherits(c,pr);unsigned types=((snap.buttons[b][mod]&0x1e)?1u<<4:0)|((snap.buttons[b][mod]&0xe0)?1u<<3:0);unsigned exclusions=exclusionMask(c,t,types);bool wheelExcluded=(exclusions&(1u<<4))!=0,rockerExcluded=(exclusions&(1u<<3))!=0;
  BindingRange range(snap,b,mod);for(int i=range.first;range.valid(i);i=range.advance(i)){const auto&g=c.g[i];if(!g.enabled||!g.steps||!(g.profile==pr||(g.profile==0&&inherited&&!blockedGlobal(c,pr,g.id)))||activationButton(c,g)!=b||g.mods!=mod||g.trigger>=8||(!g.trigger&&!g.count))continue;if((g.trigger>=1&&g.trigger<=4&&wheelExcluded)||(g.trigger>=5&&rockerExcluded))continue;mask|=1<<g.trigger;if(mask==snap.buttons[b][mod])break;}return mask;
 }
 // Wheel and rocker triggers are discrete events. While the activation button

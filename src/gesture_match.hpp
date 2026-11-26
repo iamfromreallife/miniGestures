@@ -15,7 +15,8 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
  if(j.direct){if(c.ng&&c.g[0].steps){quality=100;return 0;}return -1;}
  if(!c.enabled)return -1;
  int pr=profile(c,j.t);
- if(excluded(c,j.t,j.hotkey?2:1)||(!j.hotkey&&j.trigger>=1&&j.trigger<=4&&excluded(c,j.t,4))||(!j.hotkey&&j.trigger>=5&&excluded(c,j.t,3))){quality=-4;return -1;}
+ unsigned excludedTypes=1u<<(j.hotkey?2:1);if(!j.hotkey&&j.trigger>=1&&j.trigger<=4)excludedTypes|=1u<<4;if(!j.hotkey&&j.trigger>=5)excludedTypes|=1u<<3;
+ if(exclusionMask(c,j.t,excludedTypes)){quality=-4;return -1;}
  bool drawn=!j.hotkey&&!j.trigger;
  mgangular::Signature input{};
  if(drawn){if(j.n<2||j.n>maxDrawingPoints)return -1;input=mgangular::signature(j.p,j.n);if(!input.valid)return -1;}
@@ -23,7 +24,7 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
  int best=-1,bscore=-1,second=-1,secondIndex=-1;long long bestRank=-1;
  for(int pass=0;pass<2;pass++){
   int wanted=pass==0?pr:0;if(pass==1&&(!pr||!inherits(c,pr)))break;
-  BindingRange range(*j.s,j.button,j.mods,j.hotkey,j.hotkey?-1:j.trigger);
+  BindingRange range(*j.s,j.button,j.mods,j.hotkey,j.hotkey?-1:j.trigger,wanted);
   for(int i=range.first;range.valid(i);i=range.advance(i)){
    auto&g=c.g[i];if(!g.enabled||g.profile!=wanted||!g.steps)continue;
    if(pass==1&&blockedGlobal(c,pr,g.id))continue;

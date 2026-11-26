@@ -34,6 +34,9 @@ if errorlevel 1 goto fail
 rem The resource already embeds the original PerMonitorV2/asInvoker manifest.
 link.exe /nologo /MACHINE:X64 /SUBSYSTEM:WINDOWS /OUT:"build\miniGestures.exe" /STACK:8388608 /INCREMENTAL:NO /OPT:REF /OPT:ICF /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /GUARD:CF /MANIFEST:NO "build\core.obj" "build\native_host.obj" "build\miniGestures.res" kernel32.lib user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib taskschd.lib uuid.lib
 if errorlevel 1 goto fail
+echo Running headless performance regression checks...
+start "" /wait "build\miniGestures.exe" --performance-self-test
+if errorlevel 1 goto fail
 copy /Y "build\miniGestures.exe" "miniGestures.exe" >nul
 if errorlevel 1 goto fail
 echo.

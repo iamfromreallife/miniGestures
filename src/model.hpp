@@ -58,7 +58,7 @@ static inline bool sameRuntimeGesture(const Gesture& src,const RuntimeGesture& d
   (!src.steps||!memcmp(src.actions,dst.actions,(up)src.steps*sizeof(Act)));
 }
 struct PreparedRule{mgregex::Program* fields[4];};
-struct RuntimeConfig:ConfigScalars{RuntimeGesture* g;Rule* a;Rule* e;GlobalBlock* blocks;PreparedRule* prepared;};
+struct RuntimeConfig:ConfigScalars{RuntimeGesture* g;Rule* a;Rule* e;GlobalBlock* blocks;GlobalBlock* sortedBlocks;PreparedRule* prepared;};
 static inline void prepareRules(RuntimeConfig& c){
  const up count=(up)c.na+c.ne;if(!count||count>((up)-1)/sizeof(PreparedRule))return;
  bool any=false;for(up i=0;i<count&&!any;i++){const auto& r=i<(up)c.na?c.a[i]:c.e[i-c.na];if(r.enabled)any=mgregex::is(r.exe)||mgregex::is(r.path)||mgregex::is(r.cls)||mgregex::is(r.title);}
@@ -71,11 +71,11 @@ static inline void releaseRules(RuntimeConfig& c){
 }
 // Rocker right always starts with the left button, independently of the default.
 template<class G> static inline int activationButton(const ConfigScalars&c,const G&g){return g.trigger==6?1:(g.button?g.button:c.button);}
-struct BindingEntry{int key,index;};
+struct BindingEntry{int key,profile,index;};
 struct BindingIndex{int count;BindingEntry* entries(){return reinterpret_cast<BindingEntry*>(this+1);}const BindingEntry* entries()const{return reinterpret_cast<const BindingEntry*>(this+1);}};
 struct Snapshot{BindingIndex* index;mgangular::Signature* angular;up* angularOffsets;volatile long refs;unsigned char buttons[6][16];u16 keys[256];bool rules,pathRules,exclusionRules,mouseWanted,keyWanted;RuntimeConfig c;};
 static_assert(alignof(Snapshot)>=alignof(RuntimeGesture)&&alignof(RuntimeGesture)>=alignof(Rule)&&alignof(Rule)>=alignof(P)&&alignof(P)>=alignof(Act),"Runtime snapshot alignment");
-static inline void retain(Snapshot*s){InterlockedIncrement(&s->refs);} static inline void release(Snapshot*s){if(s&&InterlockedExchangeAdd(&s->refs,-1)==1){releaseRules(s->c);freep(s->angularOffsets);freep(s->angular);freep(s->index);freep(s);}}
+static inline void retain(Snapshot*s){InterlockedIncrement(&s->refs);} static inline void release(Snapshot*s){if(s&&InterlockedExchangeAdd(&s->refs,-1)==1){releaseRules(s->c);freep(s->c.sortedBlocks);freep(s->angularOffsets);freep(s->angular);freep(s->index);freep(s);}}
 // Immutable runtime snapshots contain only existing gestures and rules, not the
 // editor's unused fixed capacity or category records. Keep one slot for Test.
 // All offsets remain naturally aligned. Every multiplication is bounded
@@ -96,25 +96,26 @@ static inline void indexBindings(Snapshot& s){
  const auto& c=s.c;if(c.ng<=0)return;
  up maxEntries=3*(up)c.ng;if(maxEntries>0x7fffffffu||maxEntries>((up)-1-sizeof(BindingIndex))/sizeof(BindingEntry))return;
  auto* x=(BindingIndex*)allocRaw(sizeof(BindingIndex)+maxEntries*sizeof(BindingEntry));if(!x)return;x->count=0;
- auto add=[&](int key,int i){x->entries()[x->count++]={key,i};};
+ auto add=[&](int key,int i){x->entries()[x->count++]={key,c.g[i].profile,i};};
  for(int i=0;i<c.ng;i++){const auto& g=c.g[i];if(!g.enabled)continue;int b=activationButton(c,g);
   if(b>=1&&b<=5&&g.mods>=0&&g.mods<16){add(mouseBindingKey(b,g.mods),i);if(g.trigger>=0&&g.trigger<8)add(triggerBindingKey(b,g.mods,g.trigger),i);}
   if(g.hotkey>0&&g.hotkey<256&&g.hotmods>=0&&g.hotmods<16)add(keyBindingKey(g.hotkey,g.hotmods),i);
  }
- std::sort(x->entries(),x->entries()+x->count,[](const BindingEntry&a,const BindingEntry&b){return a.key<b.key||(a.key==b.key&&a.index<b.index);});s.index=x;
+ std::sort(x->entries(),x->entries()+x->count,[](const BindingEntry&a,const BindingEntry&b){return a.key<b.key||(a.key==b.key&&(a.profile<b.profile||(a.profile==b.profile&&a.index<b.index)));});s.index=x;
 }
 struct BindingRange{
- const Snapshot& s;const BindingEntry* entries=nullptr;int cursor=0,count=0,wanted=-1,first=0;
- BindingRange(const Snapshot& snap,int button,int mods,int key=0,int trigger=-1):s(snap){
+ const Snapshot& s;const BindingEntry* entries=nullptr;int cursor=0,count=0,wanted=-1,profileFilter=-1,first=0;
+ bool accepts(const BindingEntry& e)const{return e.key==wanted&&(profileFilter<0||e.profile==profileFilter);}
+ BindingRange(const Snapshot& snap,int button,int mods,int key=0,int trigger=-1,int profile=-1):s(snap),profileFilter(profile){
   if(!s.index||mods<0||mods>=16)return;
   if(key>0&&key<256)wanted=keyBindingKey(key,mods);
   else if(!key&&button>=1&&button<=5)wanted=trigger>=0&&trigger<8?triggerBindingKey(button,mods,trigger):mouseBindingKey(button,mods);
   else return;
   entries=s.index->entries();count=s.index->count;int lo=0,hi=count;
-  while(lo<hi){int mid=lo+(hi-lo)/2;if(entries[mid].key<wanted)lo=mid+1;else hi=mid;}cursor=lo;
-  first=cursor<count&&entries[cursor].key==wanted?entries[cursor].index:-1;
+  while(lo<hi){int mid=lo+(hi-lo)/2;if(entries[mid].key<wanted||(entries[mid].key==wanted&&profileFilter>=0&&entries[mid].profile<profileFilter))lo=mid+1;else hi=mid;}cursor=lo;
+  first=cursor<count&&accepts(entries[cursor])?entries[cursor].index:-1;
  }
- int advance(int i){if(!entries)return i+1;++cursor;return cursor<count&&entries[cursor].key==wanted?entries[cursor].index:-1;}
+ int advance(int i){if(!entries)return i+1;++cursor;return cursor<count&&accepts(entries[cursor])?entries[cursor].index:-1;}
  bool valid(int i)const{return i>=0&&i<s.c.ng;}
 };
 // Cache only populated samples, rather than sixteen signatures per gesture.
@@ -139,7 +140,7 @@ static inline void cacheAngular(Snapshot& s,const Snapshot* previous=nullptr){
  }
  s.angularOffsets=offsets;s.angular=signatures;
 }
-static inline Snapshot* buildSnapshot(const Config&c,const Snapshot* previous=nullptr){up shapes=0,actions=0;if(!c.validCounts()||!runtimePayload(c,shapes,actions))return nullptr;auto*s=(Snapshot*)allocRaw(snapshotBytes(c,shapes,actions));if(s){memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;s->c.g=(RuntimeGesture*)(s+1);s->c.a=(Rule*)(s->c.g+maxn(1,c.ng));s->c.e=s->c.a+c.na;s->c.blocks=(GlobalBlock*)(s->c.e+c.ne);if(c.nb)memcpy(s->c.blocks,c.blocks.p,sizeof(GlobalBlock)*(up)c.nb);auto* sampleStorage=reinterpret_cast<P(*)[N]>(s->c.blocks+c.nb);auto* actionStorage=reinterpret_cast<Act*>(sampleStorage+shapes);for(int i=0;i<c.ng;i++)copyRuntimeGesture(s->c.g[i],c.g[i],sampleStorage,actionStorage);if(c.na)memcpy(s->c.a,c.a.p,sizeof(Rule)*c.na);if(c.ne)memcpy(s->c.e,c.e.p,sizeof(Rule)*c.ne);for(int i=0;i<c.na;i++)if(c.a[i].enabled&&(*c.a[i].exe||*c.a[i].cls||*c.a[i].title||*c.a[i].path)){s->rules=true;s->pathRules|=*c.a[i].exe!=0||*c.a[i].path!=0;}for(int i=0;i<c.ne;i++)if(c.e[i].enabled&&(*c.e[i].exe||*c.e[i].cls||*c.e[i].title||*c.e[i].path)){s->rules=true;s->exclusionRules=true;s->pathRules|=*c.e[i].exe!=0||*c.e[i].path!=0;}for(int i=0;i<c.ng;i++){auto&g=c.g[i];if(!g.enabled)continue;if(g.hotkey>0&&g.hotkey<256&&g.hotmods>=0&&g.hotmods<16)s->keys[g.hotkey]|=(u16)(1u<<g.hotmods),s->keyWanted=true;int b=activationButton(c,g);if(b>=1&&b<=5&&g.mods>=0&&g.mods<16&&g.trigger>=0&&g.trigger<8&&(g.trigger||g.count))s->buttons[b][g.mods]|=1<<g.trigger,s->mouseWanted=true;}indexBindings(*s);prepareRules(s->c);cacheAngular(*s,previous);}return s;}
+static inline Snapshot* buildSnapshot(const Config&c,const Snapshot* previous=nullptr){up shapes=0,actions=0;if(!c.validCounts()||!runtimePayload(c,shapes,actions))return nullptr;auto*s=(Snapshot*)allocRaw(snapshotBytes(c,shapes,actions));if(s){memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;s->c.g=(RuntimeGesture*)(s+1);s->c.a=(Rule*)(s->c.g+maxn(1,c.ng));s->c.e=s->c.a+c.na;s->c.blocks=(GlobalBlock*)(s->c.e+c.ne);if(c.nb){memcpy(s->c.blocks,c.blocks.p,sizeof(GlobalBlock)*(up)c.nb);if(c.nb>=8){s->c.sortedBlocks=(GlobalBlock*)allocRaw((up)c.nb*sizeof(GlobalBlock));if(s->c.sortedBlocks){memcpy(s->c.sortedBlocks,c.blocks.p,(up)c.nb*sizeof(GlobalBlock));std::sort(s->c.sortedBlocks,s->c.sortedBlocks+c.nb,[](const GlobalBlock&a,const GlobalBlock&b){return a.profile<b.profile||(a.profile==b.profile&&a.gesture<b.gesture);});}}}auto* sampleStorage=reinterpret_cast<P(*)[N]>(s->c.blocks+c.nb);auto* actionStorage=reinterpret_cast<Act*>(sampleStorage+shapes);for(int i=0;i<c.ng;i++)copyRuntimeGesture(s->c.g[i],c.g[i],sampleStorage,actionStorage);if(c.na)memcpy(s->c.a,c.a.p,sizeof(Rule)*c.na);if(c.ne)memcpy(s->c.e,c.e.p,sizeof(Rule)*c.ne);for(int i=0;i<c.na;i++)if(c.a[i].enabled&&(*c.a[i].exe||*c.a[i].cls||*c.a[i].title||*c.a[i].path)){s->rules=true;s->pathRules|=*c.a[i].exe!=0||*c.a[i].path!=0;}for(int i=0;i<c.ne;i++)if(c.e[i].enabled&&(*c.e[i].exe||*c.e[i].cls||*c.e[i].title||*c.e[i].path)){s->rules=true;s->exclusionRules=true;s->pathRules|=*c.e[i].exe!=0||*c.e[i].path!=0;}for(int i=0;i<c.ng;i++){auto&g=c.g[i];if(!g.enabled)continue;if(g.hotkey>0&&g.hotkey<256&&g.hotmods>=0&&g.hotmods<16)s->keys[g.hotkey]|=(u16)(1u<<g.hotmods),s->keyWanted=true;int b=activationButton(c,g);if(b>=1&&b<=5&&g.mods>=0&&g.mods<16&&g.trigger>=0&&g.trigger<8&&(g.trigger||g.count))s->buttons[b][g.mods]|=1<<g.trigger,s->mouseWanted=true;}indexBindings(*s);prepareRules(s->c);cacheAngular(*s,previous);}return s;}
 static inline bool sameRuntimeConfig(const Config& c,const Snapshot& s){
  const auto& r=s.c;if(c.ng!=r.ng||c.na!=r.na||c.ne!=r.ne||c.nb!=r.nb)return false;
  ConfigScalars a=c,b=r;
@@ -195,9 +196,20 @@ static inline bool preparedMatch(const Rule& r,const Target& t,const PreparedRul
   test(1,t.exe,r.path)&&test(2,t.cls,r.cls)&&test(3,t.title,r.title);
 }
 static inline int profile(const RuntimeConfig& c,const Target& t){for(int i=0;i<c.na;i++)if(preparedMatch(c.a[i],t,c.prepared?c.prepared+i:nullptr))return c.a[i].id;return 0;}
-static inline bool excluded(const RuntimeConfig& c,const Target& t,int type){for(int i=0;i<c.ne;i++)if((c.e[i].mode==0||c.e[i].mode==type)&&preparedMatch(c.e[i],t,c.prepared?c.prepared+(up)c.na+i:nullptr))return true;return false;}
+static inline unsigned exclusionMask(const RuntimeConfig& c,const Target& t,unsigned requested){
+ unsigned found=0;if(!requested)return 0;
+ for(int i=0;i<c.ne;i++){int mode=c.e[i].mode;unsigned relevant=mode==0?requested:mode>0&&mode<32?(requested&(1u<<mode)):0;
+  if((relevant&~found)&&preparedMatch(c.e[i],t,c.prepared?c.prepared+(up)c.na+i:nullptr)){found|=relevant;if(found==requested)break;}
+ }return found;
+}
+static inline bool excluded(const RuntimeConfig& c,const Target& t,int type){if(type<=0||type>=32){for(int i=0;i<c.ne;i++)if((c.e[i].mode==0||c.e[i].mode==type)&&preparedMatch(c.e[i],t,c.prepared?c.prepared+(up)c.na+i:nullptr))return true;return false;}return exclusionMask(c,t,1u<<type)!=0;}
 // Application-wide exclusions use stable IDs and heap-backed storage.
 template<class C> static inline bool blockedGlobal(const C& c,int pr,int id){if(!pr)return false;for(int i=0;i<c.nb;i++)if(c.blocks[i].profile==pr&&c.blocks[i].gesture==id)return true;return false;}
+static inline bool blockedGlobal(const RuntimeConfig& c,int pr,int id){
+ if(!pr)return false;if(!c.sortedBlocks){for(int i=0;i<c.nb;i++)if(c.blocks[i].profile==pr&&c.blocks[i].gesture==id)return true;return false;}
+ int lo=0,hi=c.nb;while(lo<hi){int m=lo+(hi-lo)/2;const auto& b=c.sortedBlocks[m];if(b.profile<pr||(b.profile==pr&&b.gesture<id))lo=m+1;else hi=m;}
+ return lo<c.nb&&c.sortedBlocks[lo].profile==pr&&c.sortedBlocks[lo].gesture==id;
+}
 template<class C,class G> static inline bool scopeEligible(const C&c,const G&g,int pr){return g.profile==pr||(g.profile==0&&inherits(c,pr)&&!blockedGlobal(c,pr,g.id));}
 static inline bool globalExists(const Config&c,int id){if(id<=0)return false;for(int i=0;i<c.ng;i++)if(c.g[i].id==id&&c.g[i].profile==0)return true;return false;}
 static inline bool appExists(const Config&c,int id){if(id<=0)return false;for(int i=0;i<c.na;i++)if(c.a[i].id==id)return true;return false;}

@@ -1,6 +1,7 @@
 #pragma once
 #include "win.hpp"
-extern "C" void* memset(void*,int,up); extern "C" void* memcpy(void*,const void*,up); extern "C" void* memmove(void*,const void*,up); extern "C" int memcmp(const void*,const void*,up);
+#include <cstring>
+using std::memset;using std::memcpy;using std::memmove;using std::memcmp;
 static inline int len(const W*s){int n=0;while(s&&s[n])++n;return n;}
 static inline void cp(W*d,const W*s,int cap){if(cap<=0)return;int i=0; if(s)for(;i<cap-1&&s[i];++i)d[i]=s[i];d[i]=0;}
 static inline void cat(W*d,const W*s,int cap){int n=len(d);if(n<cap)cp(d+n,s,cap-n);}
