@@ -25,13 +25,13 @@ static inline double arcDistance(P a,P b){return 8*mgangular::distance(a,b);}
 static inline int nearestInt(double x){return (int)(x<0?x-0.5:x+0.5);}
 static inline bool normalize(const P*p,int n,P*out){
  if(n<2||n>maxDrawingPoints)return false;
- double total=0;for(int i=1;i<n;i++)total+=arcDistance(p[i-1],p[i]);if(total<8*minSegmentPx)return false;
+ double lengths[maxDrawingPoints-1];double total=0;for(int i=1;i<n;i++){lengths[i-1]=arcDistance(p[i-1],p[i]);total+=lengths[i-1];}if(total<8*minSegmentPx)return false;
  struct Precise{double x,y;};Precise points[N];
- int j=1;double run=0,d=arcDistance(p[0],p[1]);
+ int j=1;double run=0,d=lengths[0];
  for(int k=0;k<N;k++){
   // Euclidean arc length, kept in double precision until storage.
   double target=total*k;
-  while(j<n-1&&(run+d)*(N-1)<target){run+=d;++j;d=arcDistance(p[j-1],p[j]);}
+  while(j<n-1&&(run+d)*(N-1)<target){run+=d;++j;d=lengths[j-1];}
   double t=d?(double)(target-run*(N-1))/((double)d*(N-1)):1.0;
   if(t<0)t=0;if(t>1)t=1;
   points[k]={p[j-1].x+((double)p[j].x-p[j-1].x)*t,p[j-1].y+((double)p[j].y-p[j-1].y)*t};

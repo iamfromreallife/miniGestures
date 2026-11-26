@@ -22,7 +22,13 @@ static bool flatList(int id){return id==LIST||id==ACTLIST||id==APPLIST;}
 static bool flatCombo(int id){return id==BUTTONBOX||id==MODBOX||id==TRIGGERBOX||id==EXECBOX||id==MODEBOX||id==LANGBOX||id==THEMEBOX||id==UPDATEBOX;}
 static bool flatCheck(int id){return id==ENABLEBOX||id==INHERITBOX||id==OVERBOX||id==CLOSEBOX||id==STARTBOX||id==CONFIRMBOX||id==INDICATORBOX||id==STARTWINBOX||id==ADMINBOX||id==TOPBOX||id==TASKBARBOX||id==FULLSCREENBOX||id==REMOTEINPUTBOX||id==SELECTOR_ENABLED||id==SELECTOR_INHERIT;}
 static bool flatFrame(int id){return flatEdit(id)||flatList(id)||id==TRAIN;}
-static void fillSolid(HDC dc,RECT r,DWORD c){if(r.right<=r.left||r.bottom<=r.top)return;H b=CreateSolidBrush(c);if(b){FillRect(dc,&r,b);DeleteObject(b);}}
+static void fillSolid(HDC dc,RECT r,DWORD c){
+ if(r.right<=r.left||r.bottom<=r.top)return;
+ using ColorFn=DWORD(CB*)(HDC,DWORD);
+ static auto set=(ColorFn)GetProcAddress(GetModuleHandleW(L"gdi32.dll"),"SetDCBrushColor");
+ if(set){H b=GetStockObject(18);if(b){DWORD old=set(dc,c);if(old!=0xffffffffu){FillRect(dc,&r,b);set(dc,old);return;}}}
+ H b=CreateSolidBrush(c);if(b){FillRect(dc,&r,b);DeleteObject(b);}
+}
 // Antialias just the four corners. All straight spans stay native GDI fills.
 // No GDI+ startup, DLL additions, per-pixel GDI calls, or full-control image buffers.
 #include "rounded_aa.hpp"
@@ -194,5 +200,26 @@ static void paintButtonCore(DRAWITEM*d){RECT r=d->rect;bool tab=d->id>=TAB0&&d->
  // Anchor tab text at the same left inset for both font weights.
  textFlat(d->dc,b,t,tc,(tab?0:1)|4|0x20|0x8000,face);
 }
-static void paintButton(DRAWITEM*d){int w=d->rect.right-d->rect.left,h=d->rect.bottom-d->rect.top;if(w<1||h<1)return;HDC mem=CreateCompatibleDC(d->dc);H bmp=mem?CreateCompatibleBitmap(d->dc,w,h):nullptr;if(!bmp){if(mem)DeleteDC(mem);paintButtonCore(d);return;}H old=SelectObject(mem,bmp);DRAWITEM copy=*d;copy.dc=mem;copy.rect={0,0,w,h};paintButtonCore(&copy);BitBlt(d->dc,d->rect.left,d->rect.top,w,h,mem,0,0,0xcc0020);SelectObject(mem,old);DeleteObject(bmp);DeleteDC(mem);
+// A bounded, UI-thread-only back buffer. Reset selected objects after each
+// paint; the original fallback remains available for reentrancy or allocation failure.
+struct ButtonBuffer{HDC dc=nullptr;H bmp=nullptr;int w=0,h=0;bool busy=false;
+ void clear(){if(bmp)DeleteObject(bmp);if(dc)DeleteDC(dc);dc=nullptr;bmp=nullptr;w=h=0;}
+ bool ensure(HDC target,int width,int height){
+  if(dc&&bmp&&w>=width&&h>=height)return true;
+  clear();dc=CreateCompatibleDC(target);if(!dc)return false;
+  bmp=CreateCompatibleBitmap(target,width,height);if(!bmp){clear();return false;}w=width;h=height;return true;
+ }
+};
+static ButtonBuffer buttonBuffer;
+static void paintButton(DRAWITEM*d){
+ int w=d->rect.right-d->rect.left,h=d->rect.bottom-d->rect.top;if(w<1||h<1)return;
+ bool useCache=!buttonBuffer.busy&&(up)w*h<=131072&&buttonBuffer.ensure(d->dc,w,h);
+ HDC mem=useCache?buttonBuffer.dc:CreateCompatibleDC(d->dc);
+ H bmp=useCache?buttonBuffer.bmp:mem?CreateCompatibleBitmap(d->dc,w,h):nullptr;
+ if(!bmp){if(mem&&!useCache)DeleteDC(mem);paintButtonCore(d);return;}
+ if(useCache)buttonBuffer.busy=true;
+ H old=SelectObject(mem,bmp);if(!old||old==PTR(-1)){if(useCache){buttonBuffer.busy=false;buttonBuffer.clear();}else{DeleteObject(bmp);DeleteDC(mem);}paintButtonCore(d);return;}
+ DRAWITEM copy=*d;copy.dc=mem;copy.rect={0,0,w,h};paintButtonCore(&copy);
+ BitBlt(d->dc,d->rect.left,d->rect.top,w,h,mem,0,0,0xcc0020);SelectObject(mem,old);
+ if(useCache)buttonBuffer.busy=false;else{DeleteObject(bmp);DeleteDC(mem);}
 }

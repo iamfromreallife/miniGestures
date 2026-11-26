@@ -22,10 +22,16 @@ static inline bool templatePoints(int id,P*out){
  if(id>=2200&&id<2200+SHAPES)return shape(id-2200,false,out);
  if(id>=2300&&id<2300+SHAPES)return shape(id-2300,true,out);return false;
 }
+struct TemplateCache{
+ struct Entry{int id;bool valid;P points[1][N];};
+ Entry entries[72+2*SHAPES]{};int count=0;
+ TemplateCache(){auto add=[&](int id){auto& e=entries[count++];e.id=id;e.valid=templatePoints(id,e.points[0]);};
+  for(int i=0;i<8;i++)add(2000+i);for(int i=0;i<64;i++)add(2100+i);for(int i=0;i<SHAPES;i++){add(2200+i);add(2300+i);}
+ }
+};
 static inline TemplateMatch closestTemplate(const P*drawn,P*out){
- TemplateMatch best;char seq[32];int sn=sequence(drawn,N,seq);P p[1][N];
- auto consider=[&](int id){if(!templatePoints(id,p[0]))return;auto r=rankedShapePrepared(drawn,seq,sn,p,1,templateSnapThreshold,nullptr,best.rank);
-  if(r.rank>=0&&(r.rank>best.rank||(r.rank==best.rank&&r.score>best.score))){best={id,r.score,r.rank};for(int k=0;k<N;k++)out[k]=p[0][k];}};
- for(int i=0;i<8;i++)consider(2000+i);for(int i=0;i<64;i++)consider(2100+i);
- for(int i=0;i<SHAPES;i++){consider(2200+i);consider(2300+i);}return best;
+ static const TemplateCache cache;TemplateMatch best;char seq[32];int sn=sequence(drawn,N,seq);
+ auto consider=[&](const TemplateCache::Entry& e){if(!e.valid)return;int id=e.id;auto r=rankedShapePrepared(drawn,seq,sn,e.points,1,templateSnapThreshold,nullptr,best.rank);
+  if(r.rank>=0&&(r.rank>best.rank||(r.rank==best.rank&&r.score>best.score))){best={id,r.score,r.rank};for(int k=0;k<N;k++)out[k]=e.points[0][k];}};
+ for(int i=0;i<cache.count;i++)consider(cache.entries[i]);return best;
 }

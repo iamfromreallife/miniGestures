@@ -1,9 +1,12 @@
 #pragma once
 #include "model.hpp"
-struct Job{Snapshot*s;Target t;int button,mods,trigger,hotkey,n,direct,deferred;P p[maxDrawingPoints];};
-// Every consumer reads only the populated point prefix. Avoid clearing the
-// 8 KiB stroke buffer for hotkeys, rocker/wheel events and direct actions.
-static inline Job* allocateJob(){auto* j=(Job*)allocRaw(sizeof(Job));if(j)memset(j,0,offsetof(Job,p));return j;}
+struct Job{Snapshot*s;Target t;int button,mods,trigger,hotkey,n,direct,deferred;P* p;};
+// Discrete jobs carry no stroke storage; drawn jobs carry exactly n points.
+static inline Job* allocateJob(int points=0){
+ if(points<0||points>maxDrawingPoints)return nullptr;
+ auto* j=(Job*)allocRaw(sizeof(Job)+(up)points*sizeof(P));
+ if(j){memset(j,0,sizeof(Job));if(points)j->p=reinterpret_cast<P*>(j+1);}return j;
+}
 static inline bool eligible(const Config&c,const Gesture&g,const Target&t,int pr,int b,int m,int trig){return g.enabled&&scopeEligible(c,g,pr)&&activationButton(c,g)==b&&g.mods==m&&g.trigger==trig;}
 // Drawn shapes compete across all eligible scopes. A local binding wins only
 // an equal angular rank and similarity; discrete triggers keep local override.

@@ -12,10 +12,9 @@ static inline bool centerWindow(HWND h,bool ordered){
  visible=outer;
  // DWM's extended bounds exclude invisible resize borders, and both bounds
  // are physical screen coordinates in this per-monitor-v2-aware process.
- H dwm=LoadLibraryExW(L"dwmapi.dll",nullptr,0x800);
- if(dwm){using GetBounds=long(CB*)(HWND,DWORD,void*,DWORD);auto fn=(GetBounds)GetProcAddress(dwm,"DwmGetWindowAttribute");RECT r{};
+ static H dwm=LoadLibraryExW(L"dwmapi.dll",nullptr,0x800);
+ if(dwm){using GetBounds=long(CB*)(HWND,DWORD,void*,DWORD);static auto fn=(GetBounds)GetProcAddress(dwm,"DwmGetWindowAttribute");RECT r{};
   if(fn&&fn(h,9,&r,sizeof(r))>=0&&r.right>r.left&&r.bottom>r.top)visible=r;
-  FreeLibrary(dwm);
  }
  int x,y;if(!centeredOrigin(mi.rcWork,outer,visible,x,y))return false;
  return SetWindowPos(h,nullptr,x,y,0,0,1|4|16|(ordered?0:0x4000))!=0;
