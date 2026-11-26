@@ -28,11 +28,16 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
    else if(activationButton(c,g)!=j.button||g.mods!=j.mods||g.trigger!=j.trigger)continue;
    int s=100;long long rank=0;
    if(drawn){
-    if(!g.count)continue;
-    // Use the cached signature by reference. Compute a temporary only
-    // when allocation of the immutable snapshot cache failed.
-    const double similarity=j.s->angular?mgangular::similarity(input,j.s->angular[i]):
-      mgangular::similarity(input,mgangular::signature(g.samples[0],N));
+    if(g.count<=0||g.count>MAXS)continue;
+    // Every saved shape is an independent alternative for the same action.
+    // Compare all populated samples, retaining the highest angular score.
+    double similarity=-1;
+    for(int k=0;k<g.count;k++){
+     const double score=j.s->angular?mgangular::similarity(input,j.s->angular[j.s->angularOffsets[i]+k]):
+       mgangular::similarity(input,mgangular::signature(g.samples[k],N));
+     if(score>similarity)similarity=score;
+     if(similarity==100)break;
+    }
     rank=mgangular::rank(similarity);if(rank<0)continue;
     s=mgangular::percent(similarity);
     if(rank>closestRank){closestRank=rank;quality=s;if(closestIndex)*closestIndex=i;}
