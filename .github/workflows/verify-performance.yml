@@ -1,4 +1,4 @@
-name: Verify performance build
+name: Verify final performance build
 on:
   push:
     branches: [main]

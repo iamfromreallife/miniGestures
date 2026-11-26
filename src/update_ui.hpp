@@ -39,6 +39,8 @@ static void versionStatusText(W* out,int capacity,const W* value){cp(out,updateT
 static void updateVersionStatus(){if(!settingsWnd||!settingsControls[UPDATEVERSIONS])return;W text[256]{};versionStatusText(text,256,updateState==1?updateText(4):*latestAvailable?latestAvailable:updateChecked?updateText(13):L"—");SetWindowTextW(settingsControls[UPDATEVERSIONS],text);}
 static void updateButton(){updateVersionStatus();if(settingsWnd&&settingsControls[UPDATEBTN]){SetWindowTextW(settingsControls[UPDATEBTN],updateText(updateState==1?4:0));EnableWindow(settingsControls[UPDATEBTN],updateState!=1);InvalidateRect(settingsControls[UPDATEBTN],nullptr,0);}}
 static void showUpdateError(HWND owner){W message[1400]{},detail[1000]{};cp(message,updateText(6),1400);if(NativeUpdateError(detail,1000)){cat(message,L"\r\n\r\n",1400);cat(message,detail,1400);}bool old=updatePrompt;updatePrompt=true;MessageBoxW(owner,message,L"miniGestures",0x30);updatePrompt=old;}
+static bool updateTimerActive=false;
+static void syncUpdateTimer(){if(!controllerwnd||exiting)return;bool wanted=configValid&&!noHooks&&!shutdownTestMode&&(cfg.updateMode!=0||updateState||updateShowPending);if(wanted&&!updateTimerActive)updateTimerActive=SetTimer(controllerwnd,102,1000,nullptr)!=0;else if(!wanted&&updateTimerActive){KillTimer(controllerwnd,102);updateTimerActive=false;}}
 static void startUpdate(bool manual){if(exiting||!configValid||noHooks||shutdownTestMode||updatePrompt)return;
  if(updateState){if(manual)updateManual=true;return;}
  int now=NativeUpdateMinute(),last=cfg.updateLastCheck,interval=cfg.updateMode==1?1440:10080;
@@ -46,6 +48,6 @@ static void startUpdate(bool manual){if(exiting||!configValid||noHooks||shutdown
  if(now<=0)return;
  cfg.updateLastCheck=now;if(!saveconfig(cfg,configpath)){cfg.updateLastCheck=last;if(manual)MessageBoxW(settingsWnd,updateText(6),L"miniGestures",0x30);return;}
  updateManual=manual;updateChecked=true;if(!NativeUpdateStart()){updateButton();if(manual)showUpdateError(settingsWnd);return;}
- updateState=1;updateButton();
+ updateState=1;updateButton();syncUpdateTimer();
 }
 static void tickUpdate();

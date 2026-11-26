@@ -151,12 +151,18 @@ static void aaPolylineToSurface(u32* pix,int w,int h,const POINT* pts,int count,
 // Render high-resolution strips into a bounded scratch surface, then resolve
 // the complete low-resolution image in one GDI transfer. Pixel coordinates,
 // line order, repeated integer alpha blends and rounding are unchanged.
+struct RasterScratch{u32* hi=nullptr,*lo=nullptr;up highCap=0,lowCap=0;bool busy=false;
+ static bool grow(u32*& p,up& cap,up n){if(p&&cap>=n)return true;freep(p);p=(u32*)allocRaw(n*4);cap=p?n:0;return p!=nullptr;}
+ void clear(){if(busy)return;freep(hi);freep(lo);hi=lo=nullptr;highCap=lowCap=0;}
+};
+static RasterScratch rasterScratch;
 static bool drawPolylineAA(HDC dc,RECT bounds,const POINT* pts,int count,const POINT* tip,int tipCount,DWORD fg,DWORD bg,int thickness){
  if(count<2)return false;const int scale=8;
  int w=maxn(1,bounds.right-bounds.left),h=maxn(1,bounds.bottom-bounds.top),sw=w*scale;
  const up rowBytes=(up)sw*scale*4;const int band=maxn(1,minn(h,(int)(4*1024*1024/rowBytes)));
- auto* hi=(u32*)allocRaw(rowBytes*band);auto* lo=(u32*)allocRaw((up)w*h*4);
- if(!hi||!lo){freep(hi);freep(lo);return false;}
+ bool useScratch=!rasterScratch.busy&&RasterScratch::grow(rasterScratch.hi,rasterScratch.highCap,rowBytes*band/4)&&RasterScratch::grow(rasterScratch.lo,rasterScratch.lowCap,(up)w*h);
+ auto* hi=useScratch?rasterScratch.hi:(u32*)allocRaw(rowBytes*band);auto* lo=useScratch?rasterScratch.lo:(u32*)allocRaw((up)w*h*4);
+ if(!hi||!lo){if(!useScratch){freep(hi);freep(lo);}return false;}if(useScratch)rasterScratch.busy=true;
  auto mapPoint=[&](const POINT& p){return POINT{(p.x-bounds.left)*scale+scale/2,(p.y-bounds.top)*scale+scale/2};};
  float radius=maxn(1,thickness*scale)*0.5f;POINT linePts[512],tipPts[8];
  int n=count>512?512:count,m=tip&&tipCount>=2?minn(8,tipCount):0;
@@ -170,7 +176,7 @@ static bool drawPolylineAA(HDC dc,RECT bounds,const POINT* pts,int count,const P
   }
   aaDownsample(lo+(up)y*w,w,rows,hi,scale);
  }
- glyphBlit(dc,bounds.left,bounds.top,w,h,lo);freep(hi);freep(lo);return true;
+ glyphBlit(dc,bounds.left,bounds.top,w,h,lo);if(useScratch)rasterScratch.busy=false;else{freep(hi);freep(lo);}return true;
 }
 static void drawFolderArrowAA(HDC dc,int left,int top,int size,DWORD fg,DWORD bg,bool closed){
  cachedGlyph(dc,left,top,{closed?2:1,size,size,fg,bg,0},[&](u32* pixels){

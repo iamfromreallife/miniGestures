@@ -1,6 +1,6 @@
 #pragma once
 #include "model.hpp"
-struct Job{Snapshot*s;Target t;int button,mods,trigger,hotkey,n,direct,deferred;P* p;};
+struct Job{Snapshot*s;Target t;int button,mods,trigger,hotkey,n,direct,deferred,selectedIndex,quality;P* p;};
 // Discrete jobs carry no stroke storage; drawn jobs carry exactly n points.
 static inline Job* allocateJob(int points=0){
  if(points<0||points>maxDrawingPoints)return nullptr;

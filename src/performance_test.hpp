@@ -52,6 +52,9 @@ static bool runtime(){
  auto* snap=buildSnapshot(c);if(!snap)return false;
  auto check=[&](){
   if(!sameRuntimeConfig(c,*snap)||!snap->index||!snap->c.prepared||!snap->c.sortedBlocks)return false;
+  if(snap->c.g[0].actions[0].key!=65||snap->c.g[0].actions[0].mods!=2)return false;
+  RuntimeAction prepared{};Act program{};program.type=22;cp(program.arg,L"test.exe|--argument",256);prepareAction(prepared,program);if(prepared.separator!=8)return false;
+  cp(c.g[0].folder,L"editor folder",96);c.a[0].uiOrder=7;cp(c.a[0].folder,L"editor folder",96);if(!sameRuntimeConfig(c,*snap))return false;
   c.winx=200;c.winy=100;if(!sameRuntimeConfig(c,*snap))return false;
   ++c.g[0].actions[0].type;bool changed=!sameRuntimeConfig(c,*snap);--c.g[0].actions[0].type;if(!changed)return false;
   for(int pr=0;pr<3;pr++)for(int id=0;id<40;id++)if(blockedGlobal(c,pr,id)!=blockedGlobal(snap->c,pr,id))return false;
@@ -92,10 +95,24 @@ static bool raster(){
   }if(memcmp(lo1,lo2,sizeof(lo1)))return false;
  }return true;
 }
+static bool trailGrowth(){
+ constexpr int size=128;u32 before[64*64]{},expanded[size*size]{},reference[size*size]{};
+ P points[]={{-20,-20},{10,12},{-3,22},{50,47},{-55,-50}};
+ TrailBounds a{-32,-32,64,64},b{-64,-64,size,size};
+ for(int width=1;width<=24;width++){memset(before,0,sizeof(before));memset(expanded,0,sizeof(expanded));memset(reference,0,sizeof(reference));
+  TrailStamp stamp;rasterTrail(before,a,points,3,width,0x5388cc,&stamp);
+  // Only test old bounds that actually contained the complete old stroke.
+  if(!trailContains(a,trailBounds(points,3,width)))continue;
+  if(!copyTrailPixels(expanded,b,before,a))return false;
+  rasterTrail(expanded,b,points+2,3,width,0x5388cc,&stamp);
+  rasterTrail(reference,b,points,5,width,0x5388cc,&stamp);
+  if(memcmp(expanded,reference,sizeof(expanded)))return false;
+ }return true;
+}
 static bool json(){
  char* b=(char*)allocRaw(configInitial);if(!b)return false;Writer w{b,0,configInitial,true};
  w.str(L"a\\b\"c\n\r\t\x0001");const char expected[]="\"a\\\\b\\\"c\\n\\r\\t \"";
  bool ok=w.ok&&w.n==(int)sizeof(expected)-1&&!memcmp(w.p,expected,sizeof(expected)-1);freep(w.p);return ok;
 }
-static bool run(){return normalization()&&regex()&&runtime()&&raster()&&json();}
+static bool run(){return normalization()&&regex()&&runtime()&&raster()&&trailGrowth()&&json();}
 }

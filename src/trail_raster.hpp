@@ -12,3 +12,9 @@ static inline void rasterTrail(u32* dst,TrailBounds b,const P* p,int n,int width
 }
 static inline bool trailContains(TrailBounds a,TrailBounds b){return b.x>=a.x&&b.y>=a.y&&b.x+b.w<=a.x+a.w&&b.y+b.h<=a.y+a.h;}
 static inline TrailBounds trailGrow(TrailBounds b,TrailBounds old){if(old.w&&old.h){int r=maxn(b.x+b.w,old.x+old.w),d=maxn(b.y+b.h,old.y+old.h);b.x=minn(b.x,old.x);b.y=minn(b.y,old.y);b.w=r-b.x;b.h=d-b.y;}int x=b.x>=0?b.x/128*128:(b.x-127)/128*128,y=b.y>=0?b.y/128*128:(b.y-127)/128*128;return {x,y,((b.x+b.w-x+127)/128)*128,((b.y+b.h-y+127)/128)*128};}
+
+static inline bool copyTrailPixels(u32* dst,TrailBounds to,const u32* src,TrailBounds from){
+ if(!dst||!src||from.w<=0||from.h<=0||!trailContains(to,from))return false;
+ int dx=from.x-to.x,dy=from.y-to.y;
+ for(int y=0;y<from.h;y++)memcpy(dst+(up)(dy+y)*to.w+dx,src+(up)y*from.w,(up)from.w*sizeof(u32));return true;
+}

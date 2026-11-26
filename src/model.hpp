@@ -38,24 +38,37 @@ struct Config:ConfigScalars{
  bool validCounts()const{return nb>=0&&nb<=blocks.capacity&&ng>=0&&ng<=g.capacity&&na>=0&&na<=a.capacity&&ne>=0&&ne<=e.capacity&&nc>=0&&nc<=categories.capacity;}
  bool copyFrom(const Config& o){if(!o.validCounts())return false;Config t;if(!t.g.reserve(o.ng)||!t.a.reserve(o.na)||!t.e.reserve(o.ne)||!t.categories.reserve(o.nc)||!t.blocks.reserve(o.nb))return false;static_cast<ConfigScalars&>(t)=o;if(o.ng)memcpy(t.g.p,o.g.p,sizeof(Gesture)*(up)o.ng);if(o.na)memcpy(t.a.p,o.a.p,sizeof(Rule)*(up)o.na);if(o.ne)memcpy(t.e.p,o.e.p,sizeof(Rule)*(up)o.ne);if(o.nc)memcpy(t.categories.p,o.categories.p,sizeof(Category)*(up)o.nc);if(o.nb)memcpy(t.blocks.p,o.blocks.p,sizeof(GlobalBlock)*(up)o.nb);swap(t);return true;}
 };
+#include "hotkey.hpp"
+// Cached action operands are used only for canonical, layout-independent VK
+// strings. Legacy localized key names still resolve at execution time.
+struct RuntimeAction{int type;W arg[256];int key,mods,separator;};
+static_assert(offsetof(RuntimeAction,key)==sizeof(Act));
+static inline void prepareAction(RuntimeAction& d,const Act& a){
+ memcpy(&d,&a,sizeof(Act));d.key=d.mods=0;d.separator=-1;
+ if(a.type==0){
+  const W* last=a.arg;for(const W* p=a.arg;*p;p++)if(*p==L'+')last=p+1;
+  if(fold(last[0])==L'v'&&fold(last[1])==L'k'){
+   int key=0,mods=0;if(parsekey(a.arg,key,mods)){W canonical[256]{};canonicalHotkey(key,mods,canonical,256);if(eq(canonical,a.arg)){d.key=key;d.mods=mods;}}
+  }
+ }else if(a.type==22||a.type==23){int i=0;while(a.arg[i]&&a.arg[i]!=L'|')++i;d.separator=i;}
+}
 // Editor records retain their existing fixed arrays and JSON representation.
 // Runtime records hold the same metadata and only the populated shape/action data.
 struct RuntimeGesture{
  int id,profile,enabled,button,mods,trigger,hotkey,hotmods,sensitivity,count,steps,parallel,preventGlobal;
- W name[96],folder[96];P (*samples)[N];Act* actions;
+ W name[96];P (*samples)[N];RuntimeAction* actions;
 };
-static_assert(offsetof(RuntimeGesture,name)==offsetof(Gesture,name)&&offsetof(RuntimeGesture,folder)==offsetof(Gesture,folder));
-static_assert(offsetof(RuntimeGesture,samples)>=offsetof(Gesture,samples));
-static inline void copyRuntimeGesture(RuntimeGesture& dst,const Gesture& src,P (*&samples)[N],Act*& actions){
- memcpy(&dst,&src,offsetof(Gesture,samples));dst.samples=samples;dst.actions=actions;
+static_assert(offsetof(RuntimeGesture,name)==offsetof(Gesture,name));
+static_assert(offsetof(RuntimeGesture,samples)>=offsetof(Gesture,folder));
+static inline void copyRuntimeGesture(RuntimeGesture& dst,const Gesture& src,P (*&samples)[N],RuntimeAction*& actions){
+ memcpy(&dst,&src,offsetof(Gesture,folder));dst.samples=samples;dst.actions=actions;
  if(src.count)memcpy(samples,src.samples,(up)src.count*sizeof(src.samples[0]));
- if(src.steps)memcpy(actions,src.actions,(up)src.steps*sizeof(Act));
+ for(int k=0;k<src.steps;k++)prepareAction(actions[k],src.actions[k]);
  samples+=src.count;actions+=src.steps;
 }
 static inline bool sameRuntimeGesture(const Gesture& src,const RuntimeGesture& dst){
- return !memcmp(&src,&dst,offsetof(Gesture,samples))&&
-  (!src.count||!memcmp(src.samples,dst.samples,(up)src.count*sizeof(src.samples[0])))&&
-  (!src.steps||!memcmp(src.actions,dst.actions,(up)src.steps*sizeof(Act)));
+ if(memcmp(&src,&dst,offsetof(Gesture,folder))||(src.count&&memcmp(src.samples,dst.samples,(up)src.count*sizeof(src.samples[0]))))return false;
+ for(int k=0;k<src.steps;k++)if(memcmp(&src.actions[k],&dst.actions[k],sizeof(Act)))return false;return true;
 }
 struct PreparedRule{mgregex::Program* fields[4];};
 struct RuntimeConfig:ConfigScalars{RuntimeGesture* g;Rule* a;Rule* e;GlobalBlock* blocks;GlobalBlock* sortedBlocks;PreparedRule* prepared;};
@@ -74,7 +87,7 @@ template<class G> static inline int activationButton(const ConfigScalars&c,const
 struct BindingEntry{int key,profile,index;};
 struct BindingIndex{int count;BindingEntry* entries(){return reinterpret_cast<BindingEntry*>(this+1);}const BindingEntry* entries()const{return reinterpret_cast<const BindingEntry*>(this+1);}};
 struct Snapshot{BindingIndex* index;mgangular::Signature* angular;up* angularOffsets;volatile long refs;unsigned char buttons[6][16];u16 keys[256];bool rules,pathRules,exclusionRules,mouseWanted,keyWanted;RuntimeConfig c;};
-static_assert(alignof(Snapshot)>=alignof(RuntimeGesture)&&alignof(RuntimeGesture)>=alignof(Rule)&&alignof(Rule)>=alignof(P)&&alignof(P)>=alignof(Act),"Runtime snapshot alignment");
+static_assert(alignof(Snapshot)>=alignof(RuntimeGesture)&&alignof(RuntimeGesture)>=alignof(Rule)&&alignof(Rule)>=alignof(P)&&alignof(P)>=alignof(RuntimeAction),"Runtime snapshot alignment");
 static inline void retain(Snapshot*s){InterlockedIncrement(&s->refs);} static inline void release(Snapshot*s){if(s&&InterlockedExchangeAdd(&s->refs,-1)==1){releaseRules(s->c);freep(s->c.sortedBlocks);freep(s->angularOffsets);freep(s->angular);freep(s->index);freep(s);}}
 // Immutable runtime snapshots contain only existing gestures and rules, not the
 // editor's unused fixed capacity or category records. Keep one slot for Test.
@@ -84,7 +97,7 @@ static inline bool runtimePayload(const Config& c,up& shapes,up& actions){
  shapes=actions=0;for(int i=0;i<c.ng;i++){const auto& g=c.g[i];if(g.count<0||g.count>MAXS||g.steps<0||g.steps>MAXA)return false;shapes+=g.count;actions+=g.steps;}return true;
 }
 static inline up snapshotBytes(const Config& c,up shapes,up actions){
- return sizeof(Snapshot)+sizeof(RuntimeGesture)*maxn(1,c.ng)+sizeof(Rule)*((up)c.na+c.ne)+sizeof(GlobalBlock)*(up)c.nb+sizeof(P)*N*shapes+sizeof(Act)*actions;
+ return sizeof(Snapshot)+sizeof(RuntimeGesture)*maxn(1,c.ng)+sizeof(Rule)*((up)c.na+c.ne)+sizeof(GlobalBlock)*(up)c.nb+sizeof(P)*N*shapes+sizeof(RuntimeAction)*actions;
 }
 // Sorted sparse entries replace dense per-key head tables; a mouse binding has
 // one generic entry for capture and one exact trigger entry for recognition.
@@ -140,7 +153,8 @@ static inline void cacheAngular(Snapshot& s,const Snapshot* previous=nullptr){
  }
  s.angularOffsets=offsets;s.angular=signatures;
 }
-static inline Snapshot* buildSnapshot(const Config&c,const Snapshot* previous=nullptr){up shapes=0,actions=0;if(!c.validCounts()||!runtimePayload(c,shapes,actions))return nullptr;auto*s=(Snapshot*)allocRaw(snapshotBytes(c,shapes,actions));if(s){memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;s->c.g=(RuntimeGesture*)(s+1);s->c.a=(Rule*)(s->c.g+maxn(1,c.ng));s->c.e=s->c.a+c.na;s->c.blocks=(GlobalBlock*)(s->c.e+c.ne);if(c.nb){memcpy(s->c.blocks,c.blocks.p,sizeof(GlobalBlock)*(up)c.nb);if(c.nb>=8){s->c.sortedBlocks=(GlobalBlock*)allocRaw((up)c.nb*sizeof(GlobalBlock));if(s->c.sortedBlocks){memcpy(s->c.sortedBlocks,c.blocks.p,(up)c.nb*sizeof(GlobalBlock));std::sort(s->c.sortedBlocks,s->c.sortedBlocks+c.nb,[](const GlobalBlock&a,const GlobalBlock&b){return a.profile<b.profile||(a.profile==b.profile&&a.gesture<b.gesture);});}}}auto* sampleStorage=reinterpret_cast<P(*)[N]>(s->c.blocks+c.nb);auto* actionStorage=reinterpret_cast<Act*>(sampleStorage+shapes);for(int i=0;i<c.ng;i++)copyRuntimeGesture(s->c.g[i],c.g[i],sampleStorage,actionStorage);if(c.na)memcpy(s->c.a,c.a.p,sizeof(Rule)*c.na);if(c.ne)memcpy(s->c.e,c.e.p,sizeof(Rule)*c.ne);for(int i=0;i<c.na;i++)if(c.a[i].enabled&&(*c.a[i].exe||*c.a[i].cls||*c.a[i].title||*c.a[i].path)){s->rules=true;s->pathRules|=*c.a[i].exe!=0||*c.a[i].path!=0;}for(int i=0;i<c.ne;i++)if(c.e[i].enabled&&(*c.e[i].exe||*c.e[i].cls||*c.e[i].title||*c.e[i].path)){s->rules=true;s->exclusionRules=true;s->pathRules|=*c.e[i].exe!=0||*c.e[i].path!=0;}for(int i=0;i<c.ng;i++){auto&g=c.g[i];if(!g.enabled)continue;if(g.hotkey>0&&g.hotkey<256&&g.hotmods>=0&&g.hotmods<16)s->keys[g.hotkey]|=(u16)(1u<<g.hotmods),s->keyWanted=true;int b=activationButton(c,g);if(b>=1&&b<=5&&g.mods>=0&&g.mods<16&&g.trigger>=0&&g.trigger<8&&(g.trigger||g.count))s->buttons[b][g.mods]|=1<<g.trigger,s->mouseWanted=true;}indexBindings(*s);prepareRules(s->c);cacheAngular(*s,previous);}return s;}
+static inline Snapshot* buildSnapshot(const Config&c,const Snapshot* previous=nullptr){up shapes=0,actions=0;if(!c.validCounts()||!runtimePayload(c,shapes,actions))return nullptr;auto*s=(Snapshot*)allocRaw(snapshotBytes(c,shapes,actions));if(s){memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;s->c.g=(RuntimeGesture*)(s+1);s->c.a=(Rule*)(s->c.g+maxn(1,c.ng));s->c.e=s->c.a+c.na;s->c.blocks=(GlobalBlock*)(s->c.e+c.ne);if(c.nb){memcpy(s->c.blocks,c.blocks.p,sizeof(GlobalBlock)*(up)c.nb);if(c.nb>=8){s->c.sortedBlocks=(GlobalBlock*)allocRaw((up)c.nb*sizeof(GlobalBlock));if(s->c.sortedBlocks){memcpy(s->c.sortedBlocks,c.blocks.p,(up)c.nb*sizeof(GlobalBlock));std::sort(s->c.sortedBlocks,s->c.sortedBlocks+c.nb,[](const GlobalBlock&a,const GlobalBlock&b){return a.profile<b.profile||(a.profile==b.profile&&a.gesture<b.gesture);});}}}auto* sampleStorage=reinterpret_cast<P(*)[N]>(s->c.blocks+c.nb);auto* actionStorage=reinterpret_cast<RuntimeAction*>(sampleStorage+shapes);for(int i=0;i<c.ng;i++)copyRuntimeGesture(s->c.g[i],c.g[i],sampleStorage,actionStorage);if(c.na)memcpy(s->c.a,c.a.p,sizeof(Rule)*c.na);if(c.ne)memcpy(s->c.e,c.e.p,sizeof(Rule)*c.ne);for(int i=0;i<c.na;i++)if(c.a[i].enabled&&(*c.a[i].exe||*c.a[i].cls||*c.a[i].title||*c.a[i].path)){s->rules=true;s->pathRules|=*c.a[i].exe!=0||*c.a[i].path!=0;}for(int i=0;i<c.ne;i++)if(c.e[i].enabled&&(*c.e[i].exe||*c.e[i].cls||*c.e[i].title||*c.e[i].path)){s->rules=true;s->exclusionRules=true;s->pathRules|=*c.e[i].exe!=0||*c.e[i].path!=0;}for(int i=0;i<c.ng;i++){auto&g=c.g[i];if(!g.enabled)continue;if(g.hotkey>0&&g.hotkey<256&&g.hotmods>=0&&g.hotmods<16)s->keys[g.hotkey]|=(u16)(1u<<g.hotmods),s->keyWanted=true;int b=activationButton(c,g);if(b>=1&&b<=5&&g.mods>=0&&g.mods<16&&g.trigger>=0&&g.trigger<8&&(g.trigger||g.count))s->buttons[b][g.mods]|=1<<g.trigger,s->mouseWanted=true;}indexBindings(*s);prepareRules(s->c);cacheAngular(*s,previous);}return s;}
+static inline bool sameRuntimeRule(const Rule& a,const Rule& b){return !memcmp(&a,&b,offsetof(Rule,uiOrder))&&!memcmp(a.name,b.name,offsetof(Rule,folder)-offsetof(Rule,name));}
 static inline bool sameRuntimeConfig(const Config& c,const Snapshot& s){
  const auto& r=s.c;if(c.ng!=r.ng||c.na!=r.na||c.ne!=r.ne||c.nb!=r.nb)return false;
  ConfigScalars a=c,b=r;
@@ -148,17 +162,17 @@ static inline bool sameRuntimeConfig(const Config& c,const Snapshot& s){
  a.nc=b.nc=0;a.settingsX=b.settingsX=0;a.settingsY=b.settingsY=0;a.settingsPositionSaved=b.settingsPositionSaved=0;
  a.indicatorX=b.indicatorX=0;a.indicatorY=b.indicatorY=0;a.indicatorPositionSaved=b.indicatorPositionSaved=0;
  for(int i=0;i<c.ng;i++)if(!sameRuntimeGesture(c.g[i],r.g[i]))return false;
+ for(int i=0;i<c.na;i++)if(!sameRuntimeRule(c.a[i],r.a[i]))return false;for(int i=0;i<c.ne;i++)if(!sameRuntimeRule(c.e[i],r.e[i]))return false;
  return !memcmp(&a,&b,sizeof(a))&&
-  (!c.na||!memcmp(c.a.p,r.a,(up)c.na*sizeof(Rule)))&&(!c.ne||!memcmp(c.e.p,r.e,(up)c.ne*sizeof(Rule)))&&
   (!c.nb||!memcmp(c.blocks.p,r.blocks,(up)c.nb*sizeof(GlobalBlock)));
 }
 // Editor Test executes just the selected gesture; do not clone unrelated records.
 static inline Snapshot* buildTestSnapshot(const Config& c,const Gesture& edit){
  if(!c.validCounts()||edit.count<0||edit.count>MAXS||edit.steps<0||edit.steps>MAXA)return nullptr;
- auto* s=(Snapshot*)allocRaw(sizeof(Snapshot)+sizeof(RuntimeGesture)+(up)edit.count*sizeof(P)*N+(up)edit.steps*sizeof(Act));if(!s)return nullptr;
+ auto* s=(Snapshot*)allocRaw(sizeof(Snapshot)+sizeof(RuntimeGesture)+(up)edit.count*sizeof(P)*N+(up)edit.steps*sizeof(RuntimeAction));if(!s)return nullptr;
  memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;
  s->c.ng=1;s->c.na=s->c.ne=s->c.nb=0;s->c.blocks=nullptr;s->c.g=(RuntimeGesture*)(s+1);s->c.a=s->c.e=(Rule*)(s->c.g+1);
- auto* samples=reinterpret_cast<P(*)[N]>(s->c.g+1);auto* actions=reinterpret_cast<Act*>(samples+edit.count);copyRuntimeGesture(s->c.g[0],edit,samples,actions);s->c.g[0].enabled=1;s->c.g[0].profile=0;return s;
+ auto* samples=reinterpret_cast<P(*)[N]>(s->c.g+1);auto* actions=reinterpret_cast<RuntimeAction*>(samples+edit.count);copyRuntimeGesture(s->c.g[0],edit,samples,actions);s->c.g[0].enabled=1;s->c.g[0].profile=0;return s;
 }
 struct Target{HWND hwnd;DWORD pid;W exe[520],cls[128],title[256];HWND child;int x,y,hasPoint,inputSafety;};
 static inline Target target(HWND h){Target t{};t.child=h;t.hwnd=GetAncestor(h,2);if(!t.hwnd)t.hwnd=h;if(!t.hwnd)return t;GetWindowThreadProcessId(t.hwnd,&t.pid);H p=OpenProcess(0x1000,0,t.pid);if(p){DWORD n=520;QueryFullProcessImageNameW(p,0,t.exe,&n);CloseHandle(p);}GetClassNameW(t.hwnd,t.cls,128);GetWindowTextW(t.hwnd,t.title,256);return t;}
