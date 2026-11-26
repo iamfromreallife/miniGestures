@@ -3,7 +3,8 @@
 #include "capture_log.hpp"
 #include "remote_input.hpp"
 // Hook thread owns capture state. A separate worker owns recognition/actions.
-static HWND mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid;static HANDLE hookthread,workerthread,actionthread,hookready,workready,actionready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0;
+// controllerwnd is stable until process shutdown; mainwnd is UI-thread only.
+static HWND controllerwnd,mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid;static HANDLE hookthread,workerthread,actionthread,hookready,workready,actionready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0;
 static H engineStop,metadataWake;static HANDLE metathread;static DWORD metatid;
 static volatile long rulesActive=0,metadataPending=0,pendingJobs=0,actionStarted=0;
 static constexpr UINT MSG_METADATA=0x8008,MSG_ENGINE_READY=0x800a,MSG_REFRESH_HOOKS=0x800b;
@@ -82,11 +83,12 @@ static bool clickTargetSafe(const Target&t){if(t.pid==ownPid)return true;if(t.in
 #endif
  auto*p=coldProcess(t.pid,false);if(metadataWake)SetEvent(metadataWake);return p->safety==1;
 }
+static bool isOwnEditorFrame(HWND h){W cls[64]{};return h&&GetClassNameW(h,cls,64)&&eq(cls,L"miniGesturesMain");}
 static bool targetForHook(HWND h,Target& out,bool& deferred,const Snapshot* snap=nullptr){if(!snap)snap=live;deferred=false;out=identity(h);if(out.hwnd==overlaywnd&&overlaywnd)return false;if(!out.hwnd||!out.pid)return false;
  // Both modeless editors are legitimate targets. Keep modal dialogs and recording protected.
  if(out.pid==ownPid){
-  if(recording||shapeRecording||!IsWindowEnabled(mainwnd)||!IsWindowEnabled(out.hwnd))return false;
-  if(out.hwnd!=mainwnd){W cls[64]{};if(!GetClassNameW(out.hwnd,cls,64)||!eq(cls,L"miniGesturesSettings"))return false;}
+  if(recording||shapeRecording||!IsWindowEnabled(out.hwnd))return false;
+  if(!isOwnEditorFrame(out.hwnd)){W cls[64]{};if(!GetClassNameW(out.hwnd,cls,64)||!eq(cls,L"miniGesturesSettings"))return false;}
  }
  if(!snap->rules)return true;
  DWORD now=GetTickCount();
@@ -174,10 +176,10 @@ static inline void stopCaptureTimer(){if(captureTimer){KillTimer(nullptr,capture
 static inline void expireCapture(DWORD now){
  if(!cap.s||cap.used||cap.expired||!(cap.mask&1)||!gestureTimeoutExpired(cap.started,now,cap.s->c.gestureTimeoutMs))return;
  cap.expired=true;stopCaptureTimer();
- if(cap.moved&&cap.s->c.overlay)PostMessageW(mainwnd,MSG_CLEAR,0,0);
+ if(cap.moved&&cap.s->c.overlay)PostMessageW(controllerwnd,MSG_CLEAR,0,0);
  MG_LOG("drawn gesture timeout ms",now-cap.started);
 }
-static inline void resetcap(){stopCaptureTimer();cap.expired=false;bool clearTrail=cap.moved&&cap.s&&cap.s->c.overlay;if(cap.s)release(cap.s);cap.s=nullptr;cap.button=0;cap.n=0;cap.used=0;cap.moved=0;cap.swallow=0;if(running&&clearTrail)PostMessageW(mainwnd,MSG_CLEAR,0,0);}
+static inline void resetcap(){stopCaptureTimer();cap.expired=false;bool clearTrail=cap.moved&&cap.s&&cap.s->c.overlay;if(cap.s)release(cap.s);cap.s=nullptr;cap.button=0;cap.n=0;cap.used=0;cap.moved=0;cap.swallow=0;if(running&&clearTrail)PostMessageW(controllerwnd,MSG_CLEAR,0,0);}
 static inline int mb(UINT msg,DWORD data){switch(msg){case 0x201:case 0x202:return 1;case 0x204:case 0x205:return 2;case 0x207:case 0x208:return 3;case 0x20b:case 0x20c:return HI(data)==1?4:5;}return 0;}
 static inline bool isdown(UINT m){return m==0x201||m==0x204||m==0x207||m==0x20b;}
 static inline bool isup(UINT m){return m==0x202||m==0x205||m==0x208||m==0x20c;}
@@ -197,7 +199,7 @@ static bool submitAtPointer(int trig,POINT point){
  if(!(cap.s->buttons[cap.button][cap.mods]&(1<<trig)))return false;
  HWND h=gestureWindowAt(point);Target t{};bool deferred=false;const auto& c=cap.s->c;MG_LOG("submit rehit trigger original hit",trig,(up)cap.t.hwnd,(up)h);
  if(shellTrayClick(h,c.taskbarGestures)||(c.disableFullscreenGestures&&fullscreenTarget(h))||!targetForHook(h,t,deferred,cap.s)||(!deferred&&cap.s->rules&&excluded(c,t,1)))return false;
- if(trig==0&&cap.button==1&&t.pid==ownPid&&t.hwnd==mainwnd){W cls[64]{};if(GetClassNameW(h,cls,64)&&eq(cls,L"miniGesturesCanvas"))return false;}
+ if(trig==0&&cap.button==1&&t.pid==ownPid&&isOwnEditorFrame(t.hwnd)){W cls[64]{};if(GetClassNameW(h,cls,64)&&eq(cls,L"miniGesturesCanvas"))return false;}
  if(!(captureMask(*cap.s,t,deferred,cap.button,cap.mods)&(1<<trig))||!clickTargetSafe(t))return false;
  t.x=point.x;t.y=point.y;t.hasPoint=1;return submit(trig,&t,deferred);
 }
@@ -218,17 +220,17 @@ static LR CB hookproc(int n,WP msg,LP lp){
   // Reserve both edges only when the target is eligible and safe to replay.
   HWND hovered=gestureWindowAt(m.pt);Target t{};bool deferred=false;
   if(shellTrayClick(hovered,live->c.taskbarGestures)||(live->c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&live->rules&&excluded(live->c,t,1))){MG_LOG("capture skipped target filter hovered target pid",(up)hovered,(up)t.hwnd,t.pid);return pass();}
-  if(b==1&&t.pid==ownPid&&t.hwnd==mainwnd){W cls[64]{};if(GetClassNameW(hovered,cls,64)&&eq(cls,L"miniGesturesCanvas"))return pass();}mask=captureMask(*live,t,deferred,b,mod);if(!mask||!clickTargetSafe(t)){MG_LOG("capture skipped mask or safety target pid mask",(up)t.hwnd,t.pid,mask);return pass();}
+  if(b==1&&t.pid==ownPid&&isOwnEditorFrame(t.hwnd)){W cls[64]{};if(GetClassNameW(hovered,cls,64)&&eq(cls,L"miniGesturesCanvas"))return pass();}mask=captureMask(*live,t,deferred,b,mod);if(!mask||!clickTargetSafe(t)){MG_LOG("capture skipped mask or safety target pid mask",(up)t.hwnd,t.pid,mask);return pass();}
   cap.mask=mask;cap.deferred=deferred;lastTrailTick=0;cap.s=live;retain(cap.s);t.x=m.pt.x;t.y=m.pt.y;t.hasPoint=1;cap.t=t;cap.button=b;cap.mods=mod;cap.n=1;cap.p[0]={m.pt.x,m.pt.y};cap.used=cap.moved=0;cap.expired=false;cap.started=m.time;if((mask&1)&&cap.s->c.gestureTimeoutMs>0)captureTimer=SetTimer(nullptr,0,(UINT)cap.s->c.gestureTimeoutMs,nullptr);// A rocker-right-only left press stays native: no click replay or drag interference.
   cap.swallow=!(b==1&&mask==(1<<6));MG_LOG("capture begin target child pid button mods mask swallow deferred",(up)t.hwnd,(up)t.child,t.pid,b,mod,mask,cap.swallow,deferred);return cap.swallow?1:pass();
  }
  if(!cap.button)return pass();if(b==cap.button&&isdown((UINT)msg))return cap.swallow?1:pass();const auto&c=cap.s->c;expireCapture(m.time);
  if(msg==0x200&&!cap.used&&cap.expired){if(!cap.moved&&mgangular::reached(P{m.pt.x,m.pt.y},cap.p[0],c.threshold))cap.moved=1;}
- if(msg==0x200&&!cap.used&&!cap.expired){P q{m.pt.x,m.pt.y};if(appendDrawingPoint(cap.p,cap.n,q)){if(!cap.moved&&mgangular::reached(q,cap.p[0],c.threshold)){cap.moved=1;if((cap.mask&1)&&c.overlay)PostMessageW(mainwnd,MSG_TRAIL,1,(LP)((u64)(u32)cap.p[0].x|((u64)(u32)cap.p[0].y<<32)));}if(cap.moved&&(cap.mask&1)&&c.overlay){DWORD now=GetTickCount();if(!lastTrailTick||now-lastTrailTick>=16){lastTrailTick=now;PostMessageW(mainwnd,MSG_TRAIL,0,(LP)((u64)(u32)q.x|((u64)(u32)q.y<<32)));}}}}
+ if(msg==0x200&&!cap.used&&!cap.expired){P q{m.pt.x,m.pt.y};if(appendDrawingPoint(cap.p,cap.n,q)){if(!cap.moved&&mgangular::reached(q,cap.p[0],c.threshold)){cap.moved=1;if((cap.mask&1)&&c.overlay)PostMessageW(controllerwnd,MSG_TRAIL,1,(LP)((u64)(u32)cap.p[0].x|((u64)(u32)cap.p[0].y<<32)));}if(cap.moved&&(cap.mask&1)&&c.overlay){DWORD now=GetTickCount();if(!lastTrailTick||now-lastTrailTick>=16){lastTrailTick=now;PostMessageW(controllerwnd,MSG_TRAIL,0,(LP)((u64)(u32)q.x|((u64)(u32)q.y<<32)));}}}}
  if((msg==0x20a||msg==0x20e)&&!cap.moved){int d=(short)HI(m.mouseData);int trig=msg==0x20a?(d>0?1:2):(d>0?4:3);if(submitAtPointer(trig,m.pt)){cap.used=1;return cap.swallow?1:pass();}}
  if(b&&b!=cap.button&&b<=3&&isdown((UINT)msg)&&!cap.moved){int trig=4+b;if(submitAtPointer(trig,m.pt)){cap.used=1;// Even with a native left press, consume both edges of the matched right click.
  if(cap.swallow||trig==6){blocked|=1<<b;if(m.flags&3u)injectedBlocked|=1u<<b;return 1;}return pass();}}
- if(b==cap.button&&isup((UINT)msg)){int old=b;bool used=cap.used,exclusive=cap.swallow;bool moved=cap.moved||mgangular::reached(P{m.pt.x,m.pt.y},cap.p[0],c.threshold);MG_LOG("capture release target child pid button used moved swallow points",(up)cap.t.hwnd,(up)cap.t.child,cap.t.pid,b,used,moved,exclusive,cap.n);if(!used&&moved&&(cap.mask&1)){if(cap.expired){PostMessageW(mainwnd,MSG_GESTURE_TIMEOUT,0,0);used=true;}else{P q{m.pt.x,m.pt.y};appendDrawingPoint(cap.p,cap.n,q,true);bool submitted=submitAtPointer(0,{cap.p[0].x,cap.p[0].y});MG_LOG("shape submit result",submitted);used=true;}}resetcap();if(!live->mouseWanted)PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);if(exclusive&&(used||replay(old)))return 1;return pass();}
+ if(b==cap.button&&isup((UINT)msg)){int old=b;bool used=cap.used,exclusive=cap.swallow;bool moved=cap.moved||mgangular::reached(P{m.pt.x,m.pt.y},cap.p[0],c.threshold);MG_LOG("capture release target child pid button used moved swallow points",(up)cap.t.hwnd,(up)cap.t.child,cap.t.pid,b,used,moved,exclusive,cap.n);if(!used&&moved&&(cap.mask&1)){if(cap.expired){PostMessageW(controllerwnd,MSG_GESTURE_TIMEOUT,0,0);used=true;}else{P q{m.pt.x,m.pt.y};appendDrawingPoint(cap.p,cap.n,q,true);bool submitted=submitAtPointer(0,{cap.p[0].x,cap.p[0].y});MG_LOG("shape submit result",submitted);used=true;}}resetcap();if(!live->mouseWanted)PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);if(exclusive&&(used||replay(old)))return 1;return pass();}
  return pass();
 }
 static int heldkeys[256];
@@ -268,7 +270,7 @@ static LR CB keyboardproc(int n,WP msg,LP lp){if(n<0)return CallNextHookEx(keyho
  }
  // Pass both edges to Windows before recording, target lookup or dispatch.
  if(screenshotKeys.pass(vk,down,up,vk=='S'?mods():0)){heldkeys[vk]=0;return CallNextHookEx(keyhook,n,msg,lp);}
- if(up&&heldkeys[vk]){int kind=heldkeys[vk];heldkeys[vk]=0;if(kind==2&&actionRecordCandidate==vk){actionRecordCandidate=0;DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(recording==2&&pid==GetCurrentProcessId())PostMessageW(mainwnd,MSG_RECORD,vk,0);}if(!recording&&live&&(!live->c.enabled||!live->keyWanted))PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);return 1;}if(!down||!live||!running||shapeRecording)return CallNextHookEx(keyhook,n,msg,lp);if(heldkeys[vk])return 1;bool keyPossible=false;for(int i=0;i<16;i++)if(live->keys[vk][i]){keyPossible=true;break;}if(!recording&&!keyPossible)return CallNextHookEx(keyhook,n,msg,lp);int m=mods();if(recording){DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(pid==GetCurrentProcessId()&&recording==2){int bit=recordModifierMask(vk),held=capturedModifiers();if(bit){actionRecordCandidate=(held||m)?0:vk;heldkeys[vk]=2;return 1;}actionRecordCandidate=0;heldkeys[vk]=1;PostMessageW(mainwnd,MSG_RECORD,vk,m|held);return 1;}if(pid==GetCurrentProcessId()&&vk!=0x10&&vk!=0x11&&vk!=0x12&&vk!=0x5b&&vk!=0x5c&&!(vk>=0xa0&&vk<=0xa5)){heldkeys[vk]=1;PostMessageW(mainwnd,MSG_RECORD,vk,m);return 1;}}if(!running||!live->c.enabled)return CallNextHookEx(keyhook,n,msg,lp);const auto&c=live->c;if(!live->keys[vk][m])return CallNextHookEx(keyhook,n,msg,lp);POINT cursor{};if(!GetCursorPos(&cursor))return CallNextHookEx(keyhook,n,msg,lp);Target t{};bool deferred=false;HWND hovered=gestureWindowAt(cursor);if((c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&excluded(c,t,2)))return CallNextHookEx(keyhook,n,msg,lp);int pr=profile(c,t);bool found=false;BindingRange range(*live,0,m,vk);for(int i=range.first;range.valid(i);i=range.advance(i)){auto&g=c.g[i];if(g.enabled&&g.hotkey==vk&&g.hotmods==m&&(deferred||scopeEligible(c,g,pr))){found=true;break;}}if(!found)return CallNextHookEx(keyhook,n,msg,lp);auto*j=allocateJob();if(!j)return CallNextHookEx(keyhook,n,msg,lp);j->s=live;retain(j->s);t.x=cursor.x;t.y=cursor.y;t.hasPoint=1;j->t=t;j->hotkey=vk;j->mods=m;j->deferred=deferred;if(postjob(j,true)){heldkeys[vk]=1;return 1;}return CallNextHookEx(keyhook,n,msg,lp);}
+ if(up&&heldkeys[vk]){int kind=heldkeys[vk];heldkeys[vk]=0;if(kind==2&&actionRecordCandidate==vk){actionRecordCandidate=0;DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(recording==2&&pid==GetCurrentProcessId())PostMessageW(controllerwnd,MSG_RECORD,vk,0);}if(!recording&&live&&(!live->c.enabled||!live->keyWanted))PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);return 1;}if(!down||!live||!running||shapeRecording)return CallNextHookEx(keyhook,n,msg,lp);if(heldkeys[vk])return 1;bool keyPossible=false;for(int i=0;i<16;i++)if(live->keys[vk][i]){keyPossible=true;break;}if(!recording&&!keyPossible)return CallNextHookEx(keyhook,n,msg,lp);int m=mods();if(recording){DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(pid==GetCurrentProcessId()&&recording==2){int bit=recordModifierMask(vk),held=capturedModifiers();if(bit){actionRecordCandidate=(held||m)?0:vk;heldkeys[vk]=2;return 1;}actionRecordCandidate=0;heldkeys[vk]=1;PostMessageW(controllerwnd,MSG_RECORD,vk,m|held);return 1;}if(pid==GetCurrentProcessId()&&vk!=0x10&&vk!=0x11&&vk!=0x12&&vk!=0x5b&&vk!=0x5c&&!(vk>=0xa0&&vk<=0xa5)){heldkeys[vk]=1;PostMessageW(controllerwnd,MSG_RECORD,vk,m);return 1;}}if(!running||!live->c.enabled)return CallNextHookEx(keyhook,n,msg,lp);const auto&c=live->c;if(!live->keys[vk][m])return CallNextHookEx(keyhook,n,msg,lp);POINT cursor{};if(!GetCursorPos(&cursor))return CallNextHookEx(keyhook,n,msg,lp);Target t{};bool deferred=false;HWND hovered=gestureWindowAt(cursor);if((c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&excluded(c,t,2)))return CallNextHookEx(keyhook,n,msg,lp);int pr=profile(c,t);bool found=false;BindingRange range(*live,0,m,vk);for(int i=range.first;range.valid(i);i=range.advance(i)){auto&g=c.g[i];if(g.enabled&&g.hotkey==vk&&g.hotmods==m&&(deferred||scopeEligible(c,g,pr))){found=true;break;}}if(!found)return CallNextHookEx(keyhook,n,msg,lp);auto*j=allocateJob();if(!j)return CallNextHookEx(keyhook,n,msg,lp);j->s=live;retain(j->s);t.x=cursor.x;t.y=cursor.y;t.hasPoint=1;j->t=t;j->hotkey=vk;j->mods=m;j->deferred=deferred;if(postjob(j,true)){heldkeys[vk]=1;return 1;}return CallNextHookEx(keyhook,n,msg,lp);}
 static Snapshot* initialSnapshot;
 static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||shouldStop())return;bool wantMouse=live->c.enabled&&live->mouseWanted,wantKey=(live->c.enabled&&live->keyWanted)||recording;
  // Keep the screenshot compatibility hook available even when gestures are
@@ -286,16 +288,16 @@ static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||s
  }
  InterlockedExchange(&mouseExpected,ok&&wantMouse?1:0);InterlockedExchange(&keyboardExpected,ok&&wantKey?1:0);InterlockedExchange(&hookok,ok?1:0);InterlockedExchange(&rulesActive,ok&&live->rules&&(wantMouse||wantKey)?1:0);if(metadataWake)SetEvent(metadataWake);
 }
-static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId();configureHooks();SetEvent(hookready);PostMessageW(mainwnd,MSG_ENGINE_READY,0,0);
- while(waitMessage(m)){if(m.message==MSG_CONFIG){Snapshot* next=(Snapshot*)m.lParam;Snapshot* old=live;live=next;release(old);long was=hookok;configureHooks();if(was!=hookok)PostMessageW(mainwnd,MSG_ENGINE_READY,1,0);}
+static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId();configureHooks();SetEvent(hookready);PostMessageW(controllerwnd,MSG_ENGINE_READY,0,0);
+ while(waitMessage(m)){if(m.message==MSG_CONFIG){Snapshot* next=(Snapshot*)m.lParam;Snapshot* old=live;live=next;release(old);long was=hookok;configureHooks();if(was!=hookok)PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}
  else if(m.message==0x113&&!m.hwnd&&captureTimer&&m.wParam==captureTimer){if(!cap.s||cap.used)stopCaptureTimer();else expireCapture(GetTickCount());}
  else if(m.message==MSG_REPLAY_CLICK){replayQueuedClick(m.wParam);}
  else if(m.message==MSG_RELAY_JOB){relayJob((Job*)m.lParam);}
- else if(m.message==MSG_REFRESH_HOOKS){configureHooks();}else if(m.message==MSG_REARM){if(!cap.button&&!blocked&&mousehook){UnhookWindowsHookEx(mousehook);mousehook=nullptr;configureHooks();(void)0;PostMessageW(mainwnd,MSG_ENGINE_READY,1,0);}}
+ else if(m.message==MSG_REFRESH_HOOKS){configureHooks();}else if(m.message==MSG_REARM){if(!cap.button&&!blocked&&mousehook){UnhookWindowsHookEx(mousehook);mousehook=nullptr;configureHooks();(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}}
  else if(m.message==MSG_WARM_METADATA){acceptWarmMetadata((WarmMetadata*)m.lParam);}
  else if(m.message==MSG_METADATA){auto*d=(MetadataPair*)m.lParam;cacheTarget(d->cursor,d->tick);cacheTarget(d->foreground,d->tick);freep(d);InterlockedExchange(&metadataPending,0);}
  else{TranslateMessage(&m);DispatchMessageW(&m);}}
- if(mousehook)UnhookWindowsHookEx(mousehook);if(keyhook)UnhookWindowsHookEx(keyhook);if(diagkeyhook)UnhookWindowsHookEx(diagkeyhook);diagkeyhook=nullptr;InterlockedExchange(&hookok,0);InterlockedExchange(&rulesActive,0);resetcap();release(live);live=nullptr;if(running){InterlockedExchange(&mouseExpected,0);InterlockedExchange(&keyboardExpected,0);(void)0;PostMessageW(mainwnd,MSG_ENGINE_READY,1,0);}while(PeekMessageW(&m,nullptr,0,0,1)){if(m.message==MSG_CONFIG)release((Snapshot*)m.lParam);else if(m.message==MSG_METADATA||m.message==MSG_WARM_METADATA)freep((void*)m.lParam);else if(m.message==MSG_REPLAY_CLICK)replayQueuedClick(m.wParam);else if(m.message==MSG_RELAY_JOB)finishJob((Job*)m.lParam);}return 0;}
+ if(mousehook)UnhookWindowsHookEx(mousehook);if(keyhook)UnhookWindowsHookEx(keyhook);if(diagkeyhook)UnhookWindowsHookEx(diagkeyhook);diagkeyhook=nullptr;InterlockedExchange(&hookok,0);InterlockedExchange(&rulesActive,0);resetcap();release(live);live=nullptr;if(running){InterlockedExchange(&mouseExpected,0);InterlockedExchange(&keyboardExpected,0);(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}while(PeekMessageW(&m,nullptr,0,0,1)){if(m.message==MSG_CONFIG)release((Snapshot*)m.lParam);else if(m.message==MSG_METADATA||m.message==MSG_WARM_METADATA)freep((void*)m.lParam);else if(m.message==MSG_REPLAY_CLICK)replayQueuedClick(m.wParam);else if(m.message==MSG_RELAY_JOB)finishJob((Job*)m.lParam);}return 0;}
 struct Result{int ok,score,conflictId,otherId;W name[196];Result* next;};
 static void resultGestureName(W* out,int cap,const RuntimeConfig&c,const Gesture&g){
  out[0]=0;if(g.profile)for(int i=0;i<c.na;i++)if(c.a[i].id==g.profile){if(*c.a[i].name){cp(out,c.a[i].name,cap);cat(out,L" - ",cap);}break;}cat(out,g.name,cap);
@@ -307,7 +309,7 @@ static volatile long resultLock=0;static Result* pendingResults=nullptr;
 static void lockResults(){while(InterlockedExchange(&resultLock,1))Sleep(0);}
 static void unlockResults(){InterlockedExchange(&resultLock,0);}
 static Result* takeResult(Result* requested){lockResults();Result** link=&pendingResults;while(*link&&*link!=requested)link=&(*link)->next;Result* result=*link;if(result)*link=result->next;unlockResults();return result;}
-static inline void deliver(Result*r){if(!r)return;lockResults();if(running){r->next=pendingResults;pendingResults=r;if(PostMessageW(mainwnd,MSG_RESULT,0,(LP)r)){unlockResults();return;}pendingResults=r->next;}unlockResults();freep(r);}
+static inline void deliver(Result*r){if(!r)return;lockResults();if(running){r->next=pendingResults;pendingResults=r;if(PostMessageW(controllerwnd,MSG_RESULT,0,(LP)r)){unlockResults();return;}pendingResults=r->next;}unlockResults();freep(r);}
 static void clearResults(){lockResults();Result* r=pendingResults;pendingResults=nullptr;unlockResults();while(r){Result* next=r->next;freep(r);r=next;}}
 // Parallel macros own a heap-backed batch, so cancellation never leaves
 // running threads referencing the dispatcher stack or a freed configuration.

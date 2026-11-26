@@ -366,7 +366,8 @@ int preflight(const Args& args) {
     if (!args.empty() || id.elevated || id.sid.empty() || !id.elevationKnown) return -1;
     const auto exe = executable(), dir = mg_host::directory(exe);
     if (exe.empty() || dir.empty() || !NativeRequestedElevation((dir + L"\\miniGestures.json").c_str())) return -1;
-    HWND existing = FindWindowW(L"miniGesturesMain", nullptr);
+    HWND existing = FindWindowW(L"miniGesturesController", nullptr);
+    if (!existing) existing = FindWindowW(L"miniGesturesMain", nullptr);
     if (existing) return PostMessageW(existing, WM_APP + 0x11, 0, 0) ? 0 : -1;
     return launchElevated(exe, id.sid) ? 0 : -1;
 }
