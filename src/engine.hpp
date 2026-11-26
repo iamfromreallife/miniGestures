@@ -21,7 +21,7 @@ static const ProcessPath* warmProcess(DWORD pid,DWORD now){for(int i=0;i<warm.co
 static void acceptWarmMetadata(WarmMetadata* data){warm.count=data->count;memcpy(warm.p,data->p,sizeof(ProcessPath)*warm.count);freep(data);InterlockedExchange(&warmPending,0);}
 
 static bool shouldStop(){return !running||WaitForSingleObject(engineStop,0)==0;}
-static int waitMessage(MSG& m){if(shouldStop())return 0;int result=GetMessageW(&m,nullptr,0,0);if(result<0)(void)0;return result>0;}
+static int waitMessage(MSG& m){if(shouldStop())return 0;int result=GetMessageW(&m,nullptr,0,0);return result>0;}
 static Target identity(HWND h){Target t{};if(!h)return t;t.child=h;t.hwnd=GetAncestor(h,2);if(!t.hwnd)t.hwnd=h;GetWindowThreadProcessId(t.hwnd,&t.pid);return t;}
 #include "task_view_win.hpp"
 // The taskbar option covers the entire taskbar, including its icons.
@@ -160,14 +160,17 @@ current.cursor=metadataTarget(WindowFromPoint(p),paths,next);auto fg=identity(Ge
   )?100:0xffffffff);if(r==0||r==0xffffffff)break;
  }return 0;
 }
-// A reserved ordinary click is returned immediately when its physical up
-// arrives. The capture is already cleared before SendInput; our marker
-// makes the injected edges pass through without entering the matcher.
-// No queue, timer, sleep, gesture worker, or foreground activation.
-static constexpr UINT MSG_RELAY_JOB=0x800f;
+// Never inject input from WH_MOUSE_LL. SendInput can synchronously wait
+// for the input pipeline, including the callback currently on our stack.
+// Queue the replay to our hook message loop; the callback returns first.
+// No timer, sleep, recognizer, action worker, or synchronous fallback.
+static constexpr UINT MSG_REPLAY_CLICK=0x800d,MSG_RELAY_JOB=0x800f;
 static bool replay(int button){
- MG_LOG("replay click button",button);
- return click(button);
+ if(button<1||button>5||!running||!hooktid)return false;
+ return PostThreadMessageW(hooktid,MSG_REPLAY_CLICK,(WP)button,0)!=0;
+}
+static void replayQueuedClick(WP button){
+ if(running&&button>=1&&button<=5)click((int)button);
 }
 
 #include "gesture_match.hpp"
@@ -211,7 +214,7 @@ static bool submitAtPointer(int trig,POINT point){
  t.x=point.x;t.y=point.y;t.hasPoint=1;return submit(trig,&t,deferred);
 }
 static LR CB hookproc(int n,WP msg,LP lp){
- if(n<0||!live)return CallNextHookEx(mousehook,n,msg,lp);
+ if(n<0||!running||!live)return CallNextHookEx(mousehook,n,msg,lp);
  InterlockedIncrement(&mouseEvents);auto&m=*(MOUSEHOOK*)lp;auto pass=[&](){return CallNextHookEx(mousehook,n,msg,lp);};
  if(msg!=0x200)MG_LOG("mouse edge message flags own buttonData capButton used moved blocked",msg,m.flags,m.extra==MARK,m.mouseData,cap.button,cap.used,cap.moved,blocked);
  int b=mb((UINT)msg,m.mouseData);
@@ -237,7 +240,7 @@ static LR CB hookproc(int n,WP msg,LP lp){
  }
  if(!cap.button)return pass();if(b==cap.button&&isdown((UINT)msg))return cap.swallow?1:pass();const auto&c=cap.s->c;
  // Plain right-up: do not run timeout/recognition logic, allocate a job,
- // resolve the target again, or wait for a queued replay. Preserve the
+ // resolve the target again, or delay dispatch with a timer. Preserve the
  // threshold test even if the final movement did not produce WM_MOUSEMOVE.
  if(b==2&&cap.button==2&&isup((UINT)msg)&&!cap.used&&!cap.moved&&
     !mgangular::reached(P{m.pt.x,m.pt.y},cap.p[0],c.threshold)){
@@ -279,7 +282,7 @@ static LR observeOwnKey(H hook,int n,WP msg,LP lp){
  return result;
 }
 static LR CB diagnosticKeyboardProc(int n,WP msg,LP lp){return observeOwnKey(diagkeyhook,n,msg,lp);}
-static LR CB keyboardproc(int n,WP msg,LP lp){if(n<0)return CallNextHookEx(keyhook,n,msg,lp);auto&k=*(KEYHOOK*)lp;if(k.extra==MARK)return observeOwnKey(keyhook,n,msg,lp);if(k.vkCode>255)return CallNextHookEx(keyhook,n,msg,lp);int vk=k.vkCode;bool down=msg==0x100||msg==0x104;bool up=msg==0x101||msg==0x105;
+static LR CB keyboardproc(int n,WP msg,LP lp){if(n<0||!running)return CallNextHookEx(keyhook,n,msg,lp);auto&k=*(KEYHOOK*)lp;if(k.extra==MARK)return observeOwnKey(keyhook,n,msg,lp);if(k.vkCode>255)return CallNextHookEx(keyhook,n,msg,lp);int vk=k.vkCode;bool down=msg==0x100||msg==0x104;bool up=msg==0x101||msg==0x105;
  // Plain physical Print Screen on our own windows can fail in the Windows
  // shell, especially at elevated integrity. Route it to the normal-user
  // Snipping Tool instead. Never intercept other apps or modified variants.
@@ -313,6 +316,7 @@ static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||s
 static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId();configureHooks();SetEvent(hookready);PostMessageW(controllerwnd,MSG_ENGINE_READY,0,0);
  while(waitMessage(m)){if(m.message==MSG_CONFIG){Snapshot* next=(Snapshot*)m.lParam;Snapshot* old=live;live=next;release(old);long was=hookok;configureHooks();if(was!=hookok)PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}
  else if(m.message==0x113&&!m.hwnd&&captureTimer&&m.wParam==captureTimer){if(!cap.s||cap.used)stopCaptureTimer();else expireCapture(GetTickCount());}
+ else if(m.message==MSG_REPLAY_CLICK){replayQueuedClick(m.wParam);}
  else if(m.message==MSG_RELAY_JOB){relayJob((Job*)m.lParam);}
  else if(m.message==MSG_REFRESH_HOOKS){configureHooks();}else if(m.message==MSG_REARM){if(!cap.button&&!blocked&&mousehook){UnhookWindowsHookEx(mousehook);mousehook=nullptr;configureHooks();(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}}
  else if(m.message==MSG_WARM_METADATA){acceptWarmMetadata((WarmMetadata*)m.lParam);}
