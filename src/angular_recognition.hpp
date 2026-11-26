@@ -15,12 +15,18 @@ template<class P> inline bool reached(P a,P b,int limit){
 }
 template<class P> inline Signature signature(const P* p,int n){
  Signature result{};if(!p||n<2)return result;
- double total=0;for(int i=1;i<n;i++)total+=distance(p[i-1],p[i]);
+ // Avoid evaluating every Euclidean segment twice. The production capture
+ // is bounded to 1000 points; larger standalone inputs use the original path.
+ constexpr int cachedSegments=999;
+ double lengths[cachedSegments];
+ const bool cached=n<=cachedSegments+1;
+ double total=0;for(int i=1;i<n;i++){double d=distance(p[i-1],p[i]);if(cached)lengths[i-1]=d;total+=d;}
+ auto length=[&](int j){return cached?lengths[j-1]:distance(p[j-1],p[j]);};
  if(!(total>0))return result;
- int j=1;double run=0,d=distance(p[0],p[1]),px=p[0].x,py=p[0].y;
+ int j=1;double run=0,d=length(1),px=p[0].x,py=p[0].y;
  for(int k=1;k<points;k++){
   const double target=total*k/(points-1);
-  while(j<n-1&&(d==0||run+d<target)){run+=d;++j;d=distance(p[j-1],p[j]);}
+  while(j<n-1&&(d==0||run+d<target)){run+=d;++j;d=length(j);}
   double t=d?(target-run)/d:1;if(t<0)t=0;if(t>1)t=1;
   double x=p[j-1].x+((double)p[j].x-p[j-1].x)*t;
   double y=p[j-1].y+((double)p[j].y-p[j-1].y)*t;
