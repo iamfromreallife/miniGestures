@@ -4,7 +4,7 @@
 #include "remote_input.hpp"
 // Hook thread owns capture state. A separate worker owns recognition/actions.
 // controllerwnd is stable until process shutdown; mainwnd is UI-thread only.
-static HWND controllerwnd,mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid;static HANDLE hookthread,workerthread,actionthread,hookready,workready,actionready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0,trayMenuActive=0;
+static HWND controllerwnd,mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid,replaytid;static HANDLE hookthread,workerthread,actionthread,replaythread,hookready,workready,actionready,replayready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0,trayMenuActive=0;
 static H engineStop,metadataWake;static HANDLE metathread;static DWORD metatid;
 static volatile long rulesActive=0,metadataPending=0,pendingJobs=0,actionStarted=0;
 static constexpr UINT MSG_METADATA=0x8008,MSG_ENGINE_READY=0x800a,MSG_REFRESH_HOOKS=0x800b;
@@ -78,7 +78,7 @@ static const ProcessPath* coldProcess(DWORD pid,bool needPath){
 #endif
  return &c;
 }
-static bool clickTargetSafe(const Target&t){if(t.pid==ownPid)return true;if(t.inputSafety)return t.inputSafety==1;
+static bool clickTargetSafe(const Target&t,bool cachedOnly=false){if(t.pid==ownPid)return true;if(t.inputSafety)return t.inputSafety==1;
  DWORD now=GetTickCount();
 #ifdef _WIN32
  for(auto& v:metadata)if(v.t.pid==t.pid&&now-v.tick<=5000&&v.t.inputSafety)return v.t.inputSafety==1;
@@ -87,10 +87,14 @@ static bool clickTargetSafe(const Target&t){if(t.pid==ownPid)return true;if(t.in
 #ifndef _WIN32
  if(!fakeColdEnabled)return fakeInputSafe;
 #endif
+ // A right-button press may not perform a cold process/token query.
+ // Already-known safety remains available even between warm scans.
+ for(auto& p:coldPaths)if(p.pid==t.pid&&now-p.tick<=2000u&&p.safety)return p.safety==1;
+ if(cachedOnly){if(metadataWake)SetEvent(metadataWake);return false;}
  auto*p=coldProcess(t.pid,false);if(metadataWake)SetEvent(metadataWake);return p->safety==1;
 }
 static bool isOwnEditorFrame(HWND h){W cls[64]{};return h&&GetClassNameW(h,cls,64)&&(eq(cls,L"miniGesturesMain")||(eq(cls,L"miniGesturesController")&&IsWindowVisible(h)));}
-static bool targetForHook(HWND h,Target& out,bool& deferred,const Snapshot* snap=nullptr){if(!snap)snap=live;deferred=false;out=identity(h);if(out.hwnd==overlaywnd&&overlaywnd)return false;if(!out.hwnd||!out.pid)return false;
+static bool targetForHook(HWND h,Target& out,bool& deferred,const Snapshot* snap=nullptr,bool fastOnly=false){if(!snap)snap=live;deferred=false;out=identity(h);if(out.hwnd==overlaywnd&&overlaywnd)return false;if(!out.hwnd||!out.pid)return false;
  // Both modeless editors are legitimate targets. Keep modal dialogs and recording protected.
  if(out.pid==ownPid){
   if(recording||shapeRecording||!IsWindowEnabled(out.hwnd))return false;
@@ -98,7 +102,7 @@ static bool targetForHook(HWND h,Target& out,bool& deferred,const Snapshot* snap
  }
  if(!snap->rules)return true;
  DWORD now=GetTickCount();
- for(auto& c:metadata)if(c.t.hwnd==out.hwnd&&c.t.pid==out.pid&&now-c.tick<=1000){HWND child=out.child;out=c.t;out.child=child;if(!snap->pathRules||*out.exe){if(out.pid!=ownPid){GetClassNameW(out.hwnd,out.cls,128);out.title[0]=0;GetWindowTextW(out.hwnd,out.title,256);}return true;}break;}
+ for(auto& c:metadata)if(c.t.hwnd==out.hwnd&&c.t.pid==out.pid&&now-c.tick<=1000){HWND child=out.child;out=c.t;out.child=child;if(!snap->pathRules||*out.exe){if(out.pid!=ownPid&&(!fastOnly||snap->exclusionRules)){GetClassNameW(out.hwnd,out.cls,128);out.title[0]=0;GetWindowTextW(out.hwnd,out.title,256);}return true;}break;}
  if(out.pid!=ownPid){const W* path=nullptr;int safety=0;
   for(auto& c:metadata)if(c.t.pid==out.pid&&now-c.tick<=5000&&(!snap->pathRules||*c.t.exe)){path=c.t.exe;safety=c.t.inputSafety;break;}
   if(!path)if(auto*p=warmProcess(out.pid,now)){path=p->path;safety=p->safety;}
@@ -109,7 +113,7 @@ static bool targetForHook(HWND h,Target& out,bool& deferred,const Snapshot* snap
 #else
   if(fakeColdEnabled&&(!path||(snap->pathRules&&!*path))){
 #endif
-   auto*p=coldProcess(out.pid,snap->pathRules);path=p->path;safety=p->safety;
+   if(!fastOnly){auto*p=coldProcess(out.pid,snap->pathRules);path=p->path;safety=p->safety;}
   }
   // Class/title are read from the actual hovered HWND, not the last foreground.
   if(path&&(!snap->pathRules||*path)&&GetClassNameW(out.hwnd,out.cls,128)){cp(out.exe,path,520);out.inputSafety=safety;out.title[0]=0;GetWindowTextW(out.hwnd,out.title,256);return true;}
@@ -160,17 +164,26 @@ current.cursor=metadataTarget(WindowFromPoint(p),paths,next);auto fg=identity(Ge
   )?100:0xffffffff);if(r==0||r==0xffffffff)break;
  }return 0;
 }
-// Never inject input from WH_MOUSE_LL. SendInput can synchronously wait
-// for the input pipeline, including the callback currently on our stack.
-// Queue the replay to our hook message loop; the callback returns first.
-// No timer, sleep, recognizer, action worker, or synchronous fallback.
+// The hook must remain able to receive injected-event callbacks even
+// while SendInput is running. Use a separate input-only message queue;
+// never execute injection on the hook, recognition or action thread.
 static constexpr UINT MSG_REPLAY_CLICK=0x800d,MSG_RELAY_JOB=0x800f;
 static bool replay(int button){
- if(button<1||button>5||!running||!hooktid)return false;
- return PostThreadMessageW(hooktid,MSG_REPLAY_CLICK,(WP)button,0)!=0;
+ if(button<1||button>5||!running||!replaytid)return false;
+ DWORD tick=GetTickCount();
+ MG_LOG("click replay queued button enqueueTick",button,tick);
+ return PostThreadMessageW(replaytid,MSG_REPLAY_CLICK,(WP)button,(LP)tick)!=0;
 }
-static void replayQueuedClick(WP button){
- if(running&&button>=1&&button<=5)click((int)button);
+static DWORD CB replaymain(void*){
+ MSG m{};PeekMessageW(&m,nullptr,0,0,0);SetEvent(replayready);
+ while(waitMessage(m)){
+  if(m.message!=MSG_REPLAY_CLICK||!running||m.wParam<1||m.wParam>5)continue;
+  DWORD before=GetTickCount();
+  MG_LOG("click replay dispatch button queueMs",m.wParam,before-(DWORD)m.lParam);
+  bool ok=click((int)m.wParam);
+  MG_LOG("click replay completion button success injectionMs",m.wParam,ok,GetTickCount()-before);
+ }
+ return 0;
 }
 
 #include "gesture_match.hpp"
@@ -231,12 +244,16 @@ static LR CB hookproc(int n,WP msg,LP lp){
  if(!cap.button&&b&&isdown((UINT)msg)){
   bool possible=false;for(int i=0;i<16;i++)if(live->buttons[b][i]){possible=true;break;}if(!possible){MG_LOG("capture skipped no button binding",b);return pass();}int mod=mods(),mask=live->buttons[b][mod];if(!mask){MG_LOG("capture skipped no modifier binding button mods",b,mod);return pass();}
   // Reserve both edges only when the target is eligible and safe to replay.
+  // Right clicks are common; do not enumerate the desktop or call DWM
+  // until movement, a wheel event or a rocker confirms an actual gesture.
+  const bool fastRight=b==2;
+  DWORD captureBegin=mgdiag::enabled()?GetTickCount():0;
   HWND nativeHit=WindowFromPoint(m.pt);if(shellTrayClick(nativeHit,live->c.taskbarGestures,m.pt))return pass();
-  HWND hovered=gestureWindowAtHit(m.pt,nativeHit);Target t{};bool deferred=false;
-  if(shellTrayClick(hovered,live->c.taskbarGestures,m.pt)||(live->c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&live->rules&&excluded(live->c,t,1))){MG_LOG("capture skipped target filter hovered target pid",(up)hovered,(up)t.hwnd,t.pid);return pass();}
-  if(b==1&&t.pid==ownPid&&isOwnEditorFrame(t.hwnd)){W cls[64]{};if(GetClassNameW(hovered,cls,64)&&eq(cls,L"miniGesturesCanvas"))return pass();}mask=captureMask(*live,t,deferred,b,mod);if(!mask||!clickTargetSafe(t)){MG_LOG("capture skipped mask or safety target pid mask",(up)t.hwnd,t.pid,mask);return pass();}
+  HWND hovered=fastRight?nativeHit:gestureWindowAtHit(m.pt,nativeHit);Target t{};bool deferred=false;
+  if((hovered!=nativeHit&&shellTrayClick(hovered,live->c.taskbarGestures,m.pt))||(live->c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred,nullptr,fastRight)||(!deferred&&live->rules&&excluded(live->c,t,1))){MG_LOG("capture skipped target filter hovered target pid",(up)hovered,(up)t.hwnd,t.pid);return pass();}
+  if(b==1&&t.pid==ownPid&&isOwnEditorFrame(t.hwnd)){W cls[64]{};if(GetClassNameW(hovered,cls,64)&&eq(cls,L"miniGesturesCanvas"))return pass();}mask=captureMask(*live,t,deferred,b,mod);if(!mask||!clickTargetSafe(t,fastRight)){MG_LOG("capture skipped mask or safety target pid mask",(up)t.hwnd,t.pid,mask);return pass();}
   cap.mask=mask;cap.deferred=deferred;lastTrailTick=0;cap.s=live;retain(cap.s);t.x=m.pt.x;t.y=m.pt.y;t.hasPoint=1;cap.t=t;cap.button=b;cap.mods=mod;cap.n=1;cap.p[0]={m.pt.x,m.pt.y};cap.used=cap.moved=0;cap.expired=false;cap.started=m.time;if((mask&1)&&cap.s->c.gestureTimeoutMs>0)captureTimer=SetTimer(nullptr,0,(UINT)cap.s->c.gestureTimeoutMs,nullptr);// A rocker-right-only left press stays native: no click replay or drag interference.
-  cap.swallow=!(b==1&&mask==(1<<6));MG_LOG("capture begin target child pid button mods mask swallow deferred",(up)t.hwnd,(up)t.child,t.pid,b,mod,mask,cap.swallow,deferred);return cap.swallow?1:pass();
+  cap.swallow=!(b==1&&mask==(1<<6));MG_LOG("capture press processing button elapsedMs fastPath",b,GetTickCount()-captureBegin,fastRight);MG_LOG("capture begin target child pid button mods mask swallow deferred",(up)t.hwnd,(up)t.child,t.pid,b,mod,mask,cap.swallow,deferred);return cap.swallow?1:pass();
  }
  if(!cap.button)return pass();if(b==cap.button&&isdown((UINT)msg))return cap.swallow?1:pass();const auto&c=cap.s->c;
  // Plain right-up: do not run timeout/recognition logic, allocate a job,
@@ -316,7 +333,6 @@ static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||s
 static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId();configureHooks();SetEvent(hookready);PostMessageW(controllerwnd,MSG_ENGINE_READY,0,0);
  while(waitMessage(m)){if(m.message==MSG_CONFIG){Snapshot* next=(Snapshot*)m.lParam;Snapshot* old=live;live=next;release(old);long was=hookok;configureHooks();if(was!=hookok)PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}
  else if(m.message==0x113&&!m.hwnd&&captureTimer&&m.wParam==captureTimer){if(!cap.s||cap.used)stopCaptureTimer();else expireCapture(GetTickCount());}
- else if(m.message==MSG_REPLAY_CLICK){replayQueuedClick(m.wParam);}
  else if(m.message==MSG_RELAY_JOB){relayJob((Job*)m.lParam);}
  else if(m.message==MSG_REFRESH_HOOKS){configureHooks();}else if(m.message==MSG_REARM){if(!cap.button&&!blocked&&mousehook){UnhookWindowsHookEx(mousehook);mousehook=nullptr;configureHooks();(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}}
  else if(m.message==MSG_WARM_METADATA){acceptWarmMetadata((WarmMetadata*)m.lParam);}
