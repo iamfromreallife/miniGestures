@@ -17,7 +17,7 @@ static UINT argb(DWORD rgb){return 0xff000000|((rgb&255)<<16)|(rgb&0xff00)|((rgb
 #include "preview_raster.hpp"
 static DWORD ink,muted,accent,accentText,frame,fieldFill,buttonFill,hoverFill,pressedFill,appFill,shapeFill,categoryFill;
 static HBRUSH fieldBrush=nullptr;static bool darkTheme=false,legacyDarkTheme=false,highContrastTheme=false;
-static bool flatEdit(int id){switch(id){case APPSEARCH:case SEARCHBOX:case NAMEBOX:case FOLDERBOX:case KEYBOX:case SENSEBOX:case ARGBOX:case EXPATHBOX:case EXEBOX:case CLASSBOX:case TITLEBOX:case THRESHBOX:case TRAILCOLOR:case TRAILWIDTH:case INDICATORSECONDS:case GESTURETIMEOUT:case FALLBACKBOX:return true;default:return false;}}
+static bool flatEdit(int id){switch(id){case APPSEARCH:case SEARCHBOX:case NAMEBOX:case FOLDERBOX:case KEYBOX:case SENSEBOX:case ARGBOX:case EXPATHBOX:case EXEBOX:case CLASSBOX:case TITLEBOX:case THRESHBOX:case TRAILCOLOR:case TRAILWIDTH:case INDICATORSECONDS:case GESTURETIMEOUT:return true;default:return false;}}
 static bool flatList(int id){return id==LIST||id==ACTLIST||id==APPLIST;}
 static bool flatCombo(int id){return id==BUTTONBOX||id==MODBOX||id==TRIGGERBOX||id==EXECBOX||id==MODEBOX||id==LANGBOX||id==THEMEBOX||id==UPDATEBOX;}
 static bool flatCheck(int id){return id==ENABLEBOX||id==INHERITBOX||id==OVERBOX||id==CLOSEBOX||id==STARTBOX||id==CONFIRMBOX||id==INDICATORBOX||id==STARTWINBOX||id==ADMINBOX||id==TOPBOX||id==TASKBARBOX||id==FULLSCREENBOX||id==SELECTOR_ENABLED||id==SELECTOR_INHERIT;}
