@@ -14,7 +14,7 @@ static inline bool hasTrigger(const Gesture&g){return g.hotkey>0||(g.trigger==0?
 struct Rule{int id,enabled,mode,inherit,uiOrder;W name[96],exe[260],cls[128],title[128],path[260],folder[96];};
 struct GlobalBlock{int profile,gesture;};
 struct Category{int profile,collapsed,uiOrder;W name[96];};
-struct ConfigScalars{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,disableFullscreenGestures,settingsX,settingsY,settingsPositionSaved,showGestureNames,indicatorX,indicatorY,indicatorPositionSaved,updateMode,updateLastCheck,indicatorSeconds,ignoredUpdateMajor,ignoredUpdateMinor,ignoredUpdatePatch,gestureTimeoutMs,nb;};
+struct ConfigScalars{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,disableFullscreenGestures,settingsX,settingsY,settingsPositionSaved,showGestureNames,indicatorX,indicatorY,indicatorPositionSaved,updateMode,updateLastCheck,indicatorSeconds,ignoredUpdateMajor,ignoredUpdateMinor,ignoredUpdatePatch,gestureTimeoutMs,nb,allowRemoteInput;};
 // Heap-backed trivial records. Capacity grows geometrically; callers reserve
 // before changing counts. No allocations are made by the input hook.
 template<class T> struct Records{

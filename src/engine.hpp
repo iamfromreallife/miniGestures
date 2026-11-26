@@ -1,6 +1,7 @@
 #pragma once
 #include "actions.hpp"
 #include "capture_log.hpp"
+#include "remote_input.hpp"
 // Hook thread owns capture state. A separate worker owns recognition/actions.
 static HWND mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid;static HANDLE hookthread,workerthread,actionthread,hookready,workready,actionready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0;
 static H engineStop,metadataWake;static HANDLE metathread;static DWORD metatid;
@@ -161,7 +162,7 @@ static bool replay(int button){
 static void replayQueuedClick(WP button){if(button==2)click(2);}
 
 #include "gesture_match.hpp"
-struct Capture{Snapshot*s;Target t;int button,mods,n,used,moved,swallow,mask,deferred;DWORD started;bool expired;P p[maxDrawingPoints];};static Capture cap;static up captureTimer=0;static int blocked=0;
+struct Capture{Snapshot*s;Target t;int button,mods,n,used,moved,swallow,mask,deferred;DWORD started;bool expired;P p[maxDrawingPoints];};static Capture cap;static up captureTimer=0;static int blocked=0;static unsigned injectedBlocked=0;
 static inline bool cantrigger(const Config&c,const Target&t,int b,int m,int trig){int pr=profile(c,t);for(int i=0;i<c.ng;i++)if(eligible(c,c.g[i],t,pr,b,m,trig)&&(trig||c.g[i].count))return true;return false;}
 static inline void finishJob(Job*j){release(j->s);freep(j);InterlockedExchangeAdd(&pendingJobs,-1);}
 static inline bool postjob(Job*j,bool fromHook=false){if(!j)return false;MG_LOG("queue job target child pid trigger samples deferred hook",(up)j,(up)j->t.hwnd,(up)j->t.child,j->t.pid,j->trigger,j->n,j->deferred,fromHook);if(InterlockedIncrement(&pendingJobs)>MAX_PENDING_JOBS||!running||!PostThreadMessageW(fromHook?hooktid:worktid,fromHook?MSG_RELAY_JOB:MSG_JOB,0,(LP)j)){MG_LOG("queue rejected job",(up)j);finishJob(j);return false;}return true;}
@@ -204,8 +205,13 @@ static LR CB hookproc(int n,WP msg,LP lp){
  if(n<0||!live)return CallNextHookEx(mousehook,n,msg,lp);
  InterlockedIncrement(&mouseEvents);auto&m=*(MOUSEHOOK*)lp;auto pass=[&](){return CallNextHookEx(mousehook,n,msg,lp);};
  if(msg!=0x200)MG_LOG("mouse edge message flags own buttonData capButton used moved blocked",msg,m.flags,m.extra==MARK,m.mouseData,cap.button,cap.used,cap.moved,blocked);
- if(m.extra==MARK||(m.flags&1))return pass();int b=mb((UINT)msg,m.mouseData);
- if(b&&isup((UINT)msg)&&(blocked&(1<<b))){blocked&=~(1<<b);if(!blocked&&!cap.button&&(!live->c.enabled||!live->mouseWanted))PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);return 1;}
+ int b=mb((UINT)msg,m.mouseData);
+ // Preserve the active stroke's input policy until its matching release.
+ // Also drain any already-consumed injected rocker release after a settings change.
+ bool allowExternal=cap.s?cap.s->c.allowRemoteInput!=0:live->c.allowRemoteInput!=0;
+ if(b&&isup((UINT)msg)&&(injectedBlocked&(1u<<b)))allowExternal=true;
+ if(!mgremote::accepts(m.flags,m.extra==MARK,allowExternal))return pass();
+ if(b&&isup((UINT)msg)&&(blocked&(1<<b))){blocked&=~(1<<b);injectedBlocked&=~(1u<<b);if(!blocked&&!cap.button&&(!live->c.enabled||!live->mouseWanted))PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);return 1;}
  if(shapeRecording||!running||!live->c.enabled){if(cap.button&&b==cap.button&&isup((UINT)msg)){int old=cap.button;bool used=cap.used||(cap.moved&&(cap.mask&1)),exclusive=cap.swallow;resetcap();PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);if(exclusive&&(used||replay(old)))return 1;}return pass();}
  if(!cap.button&&b&&isdown((UINT)msg)){
   bool possible=false;for(int i=0;i<16;i++)if(live->buttons[b][i]){possible=true;break;}if(!possible){MG_LOG("capture skipped no button binding",b);return pass();}int mod=mods(),mask=live->buttons[b][mod];if(!mask){MG_LOG("capture skipped no modifier binding button mods",b,mod);return pass();}
@@ -221,7 +227,7 @@ static LR CB hookproc(int n,WP msg,LP lp){
  if(msg==0x200&&!cap.used&&!cap.expired){P q{m.pt.x,m.pt.y};if(appendDrawingPoint(cap.p,cap.n,q)){if(!cap.moved&&mgangular::reached(q,cap.p[0],c.threshold)){cap.moved=1;if((cap.mask&1)&&c.overlay)PostMessageW(mainwnd,MSG_TRAIL,1,(LP)((u64)(u32)cap.p[0].x|((u64)(u32)cap.p[0].y<<32)));}if(cap.moved&&(cap.mask&1)&&c.overlay){DWORD now=GetTickCount();if(!lastTrailTick||now-lastTrailTick>=16){lastTrailTick=now;PostMessageW(mainwnd,MSG_TRAIL,0,(LP)((u64)(u32)q.x|((u64)(u32)q.y<<32)));}}}}
  if((msg==0x20a||msg==0x20e)&&!cap.moved){int d=(short)HI(m.mouseData);int trig=msg==0x20a?(d>0?1:2):(d>0?4:3);if(submitAtPointer(trig,m.pt)){cap.used=1;return cap.swallow?1:pass();}}
  if(b&&b!=cap.button&&b<=3&&isdown((UINT)msg)&&!cap.moved){int trig=4+b;if(submitAtPointer(trig,m.pt)){cap.used=1;// Even with a native left press, consume both edges of the matched right click.
- if(cap.swallow||trig==6){blocked|=1<<b;return 1;}return pass();}}
+ if(cap.swallow||trig==6){blocked|=1<<b;if(m.flags&3u)injectedBlocked|=1u<<b;return 1;}return pass();}}
  if(b==cap.button&&isup((UINT)msg)){int old=b;bool used=cap.used,exclusive=cap.swallow;bool moved=cap.moved||mgangular::reached(P{m.pt.x,m.pt.y},cap.p[0],c.threshold);MG_LOG("capture release target child pid button used moved swallow points",(up)cap.t.hwnd,(up)cap.t.child,cap.t.pid,b,used,moved,exclusive,cap.n);if(!used&&moved&&(cap.mask&1)){if(cap.expired){PostMessageW(mainwnd,MSG_GESTURE_TIMEOUT,0,0);used=true;}else{P q{m.pt.x,m.pt.y};appendDrawingPoint(cap.p,cap.n,q,true);bool submitted=submitAtPointer(0,{cap.p[0].x,cap.p[0].y});MG_LOG("shape submit result",submitted);used=true;}}resetcap();if(!live->mouseWanted)PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);if(exclusive&&(used||replay(old)))return 1;return pass();}
  return pass();
 }
