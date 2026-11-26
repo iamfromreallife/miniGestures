@@ -35,7 +35,7 @@ static const W* updateText(int kind){
  ,{L"No release notes provided.",L"Não foram fornecidas notas da versão.",L"No hay notas de la versión.",L"Aucune note de version.",L"Keine Versionshinweise vorhanden.",L"Nessuna nota di rilascio."}
  };return labels[kind][clamp(cfg.lang,0,5)];
 }
-static void versionStatusText(W* out,int capacity,const W* value){cp(out,updateText(11),capacity);cat(out,L" 2.0.1    ",capacity);cat(out,updateText(12),capacity);cat(out,L" ",capacity);cat(out,value,capacity);}
+static void versionStatusText(W* out,int capacity,const W* value){cp(out,updateText(11),capacity);cat(out,L" 2.0.2    ",capacity);cat(out,updateText(12),capacity);cat(out,L" ",capacity);cat(out,value,capacity);}
 static void updateVersionStatus(){if(!settingsWnd||!settingsControls[UPDATEVERSIONS])return;W text[256]{};versionStatusText(text,256,updateState==1?updateText(4):*latestAvailable?latestAvailable:updateChecked?updateText(13):L"—");SetWindowTextW(settingsControls[UPDATEVERSIONS],text);}
 static void updateButton(){updateVersionStatus();if(settingsWnd&&settingsControls[UPDATEBTN]){SetWindowTextW(settingsControls[UPDATEBTN],updateText(updateState==1?4:0));EnableWindow(settingsControls[UPDATEBTN],updateState!=1);InvalidateRect(settingsControls[UPDATEBTN],nullptr,0);}}
 static void showUpdateError(HWND owner){W message[1400]{},detail[1000]{};cp(message,updateText(6),1400);if(NativeUpdateError(detail,1000)){cat(message,L"\r\n\r\n",1400);cat(message,detail,1400);}bool old=updatePrompt;updatePrompt=true;MessageBoxW(owner,message,L"miniGestures",0x30);updatePrompt=old;}
