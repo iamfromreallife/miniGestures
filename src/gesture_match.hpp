@@ -3,7 +3,7 @@
 struct Job{Snapshot*s;Target t;int button,mods,trigger,hotkey,n,direct,deferred;P p[maxDrawingPoints];};
 static inline bool eligible(const Config&c,const Gesture&g,const Target&t,int pr,int b,int m,int trig){return g.enabled&&scopeEligible(c,g,pr)&&activationButton(c,g)==b&&g.mods==m&&g.trigger==trig;}
 // Drawn shapes compete across all eligible scopes. A local binding wins only
-// an equal geometric rank and similarity; discrete triggers keep local override.
+// an equal angular rank and similarity; discrete triggers keep local override.
 static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* conflictId,int* otherId,int* closestIndex){
  auto&c=j.s->c;quality=0;if(closestIndex)*closestIndex=-1;if(conflictId)*conflictId=0;if(otherId)*otherId=0;
  if(j.direct){if(c.ng&&c.g[0].steps){quality=100;return 0;}return -1;}
@@ -11,8 +11,9 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
  int pr=profile(c,j.t);
  if(excluded(c,j.t,j.hotkey?2:1)||(!j.hotkey&&j.trigger>=1&&j.trigger<=4&&excluded(c,j.t,4))||(!j.hotkey&&j.trigger>=5&&excluded(c,j.t,3))){quality=-4;return -1;}
  bool drawn=!j.hotkey&&!j.trigger;
- P norm[N];char seq[32];int sn=0;
- if(drawn){if(!normalize(j.p,j.n,norm))return -1;sn=sequence(norm,N,seq);}
+ mgangular::Signature input{};
+ if(drawn){if(j.n<2||j.n>maxDrawingPoints)return -1;input=mgangular::signature(j.p,j.n);if(!input.valid)return -1;}
+ long long closestRank=-1;
  int best=-1,bscore=-1,second=-1,secondIndex=-1;long long bestRank=-1;
  for(int pass=0;pass<2;pass++){
   int wanted=pass==0?pr:0;if(pass==1&&(!pr||!inherits(c,pr)))break;
@@ -25,10 +26,12 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
    int s=100;long long rank=0;
    if(drawn){
     if(!g.count)continue;
-    int observed=closestIndex&&*closestIndex<0?-1:quality;
-    auto r=rankedShapePrepared(norm,seq,sn,g.samples,g.count,threshold,&observed,bestRank,true);
-    if(closestIndex&&observed>=0&&(*closestIndex<0||observed>quality))*closestIndex=i;
-    quality=maxn(quality,observed);s=r.score;rank=r.rank;if(s<0)continue;
+    const auto candidate=j.s->angular?j.s->angular[i]:mgangular::signature(g.samples[0],N);
+    const double similarity=mgangular::similarity(input,candidate);
+    rank=mgangular::rank(similarity);if(rank<0)continue;
+    s=mgangular::percent(similarity);
+    if(rank>closestRank){closestRank=rank;quality=s;if(closestIndex)*closestIndex=i;}
+    if(similarity+1e-9<threshold)continue;
    }
    // Profiles are visited local-first. Preserve local preference only when
    // rank and score tie; within a scope retain the original stable ID tie-break.
@@ -40,8 +43,7 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
   // Do not fall through to global hotkeys, rockers or wheel actions when a
   // local binding exists: their exact-trigger priority is intentionally unchanged.
   if(!drawn&&best>=0){quality=bscore;if(second>=0&&bscore-second<4){quality=-2;if(conflictId)*conflictId=c.g[best].id;if(otherId&&secondIndex>=0)*otherId=c.g[secondIndex].id;return -1;}return best;}
-  // An exact local shape cannot be beaten by a global shape (rank and score
-  // are both maximal). Avoid scanning inherited bindings in that common case.
+  // An exact local angular match cannot be beaten by a global shape.
   if(drawn&&bestRank==shapeRankMax&&bscore==100)break;
  }
  if(best>=0){quality=bscore;return best;}
@@ -49,8 +51,8 @@ static inline int chooseAtThreshold(const Job&j,int&quality,int threshold,int* c
 }
 
 // A failed drawn gesture may execute the exact candidate that the failure
-// indicator would name. Use the same observed score, not a second ranking
-// pass: the user explicitly opts into overriding whole-stroke rejection.
+// indicator would name. Use the same angular score, not a second ranking
+// pass: the user explicitly opts into a lower acceptance threshold.
 // The gate is strictly greater than the configured percentage (100 disables it).
 static inline int choose(const Job&j,int&quality,int* conflictId=nullptr,int* otherId=nullptr,int* closestIndex=nullptr){
  const auto&c=j.s->c;int closest=-1;
