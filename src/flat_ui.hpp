@@ -19,7 +19,7 @@ static DWORD ink,muted,accent,accentText,frame,fieldFill,buttonFill,hoverFill,pr
 static HBRUSH fieldBrush=nullptr;static bool darkTheme=false,legacyDarkTheme=false,highContrastTheme=false;
 static bool flatEdit(int id){switch(id){case APPSEARCH:case SEARCHBOX:case NAMEBOX:case FOLDERBOX:case KEYBOX:case SENSEBOX:case ARGBOX:case EXPATHBOX:case EXEBOX:case CLASSBOX:case TITLEBOX:case THRESHBOX:case TRAILCOLOR:case TRAILWIDTH:case INDICATORSECONDS:case GESTURETIMEOUT:return true;default:return false;}}
 static bool flatList(int id){return id==LIST||id==ACTLIST||id==APPLIST;}
-static bool flatCombo(int id){return id==BUTTONBOX||id==MODBOX||id==TRIGGERBOX||id==EXECBOX||id==MODEBOX||id==LANGBOX||id==THEMEBOX||id==UPDATEBOX||id==SHAPESELECT;}
+static bool flatCombo(int id){return id==BUTTONBOX||id==MODBOX||id==TRIGGERBOX||id==EXECBOX||id==MODEBOX||id==LANGBOX||id==THEMEBOX||id==UPDATEBOX;}
 static bool flatCheck(int id){return id==ENABLEBOX||id==INHERITBOX||id==OVERBOX||id==CLOSEBOX||id==STARTBOX||id==CONFIRMBOX||id==INDICATORBOX||id==STARTWINBOX||id==ADMINBOX||id==TOPBOX||id==TASKBARBOX||id==FULLSCREENBOX||id==SELECTOR_ENABLED||id==SELECTOR_INHERIT;}
 static bool flatFrame(int id){return flatEdit(id)||flatList(id)||id==TRAIN;}
 static void fillSolid(HDC dc,RECT r,DWORD c){if(r.right<=r.left||r.bottom<=r.top)return;H b=CreateSolidBrush(c);if(b){FillRect(dc,&r,b);DeleteObject(b);}}
@@ -145,16 +145,16 @@ static void elevationIcon(HDC dc,int x,int y,DWORD fg){
 // Keep geometry at 1/8-pixel precision until the final coverage resolve.
 #include "preview_cache.hpp"
 static PreviewCache previewCache;
-static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD bg){
- if(g.count<=0||!StretchDIBits)return false;
+static bool paintShapePreview(HDC dc,const P* sample,RECT r,DWORD color,DWORD bg,int arrowPx,int thicknessPx){
+ if(!sample||!StretchDIBits)return false;
  constexpr int ss=mgpaint::samples;int w=r.right-r.left,h=r.bottom-r.top;
  if(w<=0||h<=0||w>256||h>256)return false;
- int sw=w*ss,sh=h*ss,arrow=maxn(2,px(3))*ss,thickness=maxn(1,px(1))*ss;
- PreviewKey key{g.samples[0],w,h,arrow,thickness,color,bg};
+ int sw=w*ss,sh=h*ss,arrow=arrowPx*ss,thickness=thicknessPx*ss;
+ PreviewKey key{sample,w,h,arrow,thickness,color,bg};
  CornerBitmapInfo bi{40,w,-h,1,32,0,(DWORD)(w*h*4),0,0,0,0};
  if(const auto* pixels=previewCache.find(key))return StretchDIBits(dc,r.left,r.top,w,h,0,0,w,h,pixels,&bi,0,0xcc0020)>0;
  P points[N],head[3];
- if(!mgpreview::fit(g.samples[0],points,head,sw,sh,arrow,arrow+thickness))return false;
+ if(!mgpreview::fit(sample,points,head,sw,sh,arrow,arrow+thickness))return false;
  auto* mask=(u8*)allocRaw((up)sw*sh);auto* pixels=(u32*)allocRaw((up)w*h*4);
  if(!mask||!pixels){freep(mask);freep(pixels);return false;}
  memset(mask,0,(up)sw*sh);
@@ -163,6 +163,9 @@ static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD 
  for(int y=0;y<h;++y)for(int x=0;x<w;++x)pixels[y*w+x]=mgpaint::downsample(mask,sw,x,y,bg,color);
  int result=StretchDIBits(dc,r.left,r.top,w,h,0,0,w,h,pixels,&bi,0,0xcc0020);
  freep(mask);if(result<=0||!previewCache.remember(key,pixels))freep(pixels);return result>0;
+}
+static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD bg){
+ return g.count>0&&paintShapePreview(dc,g.samples[0],r,color,bg,maxn(2,px(3)),maxn(1,px(1)));
 }
 static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::mix(fieldFill,RGB(0,120,212),darkTheme?20:12);}
 static DWORD rowSelectionText(bool hc){return hc?accentText:ink;}
