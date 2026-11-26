@@ -1,6 +1,7 @@
 #pragma once
 #include "angular_recognition.hpp"
-// Platform-independent integer recognition. Translation/scale normalized, order preserved.
+// Stroke capture, saved-shape normalization and geometric template snapping.
+// Live gesture recognition uses the continuous angular matcher instead.
 struct P{int x,y;}; constexpr int legacyShapePoints=48,N=70,maxDrawingPoints=1000,minSegmentPx=6;
 static constexpr int maxGestureTimeoutMs=60000;
 // Unsigned subtraction also handles GetTickCount wrapping during a stroke.
@@ -17,7 +18,6 @@ static inline bool appendDrawingPoint(P* p,int& n,P q,bool endpoint=false){
 }
 static inline int rabs(int x){return x<0?-x:x;} static inline int rmax(int a,int b){return a>b?a:b;}
 static inline int dist(P a,P b){int x=rabs(a.x-b.x),y=rabs(a.y-b.y);return rmax(x,y)+(x<y?x:y)*3/8;}
-static inline int pathlen(const P*p,int n){int d=0;for(int i=1;i<n;i++)d+=dist(p[i-1],p[i]);return d;}
 // Preserve fractional arc length and coordinates until the final normalized
 // integer representation. The previous integer-pixel interpolation could
 // collapse adjacent points on small gestures and distort corners.
@@ -52,7 +52,6 @@ static inline void migrateLegacyShape(const P* old,P* out){
 }
 static inline int direction(int dx,int dy){int x=rabs(dx),y=rabs(dy);if(x*5<y*2)return dy<0?0:4;if(y*5<x*2)return dx>0?2:6;return dy<0?(dx>0?1:7):(dx>0?3:5);}
 static inline int sequence(const P*p,int n,char*out){int z=0;P anchor=p[0];for(int i=1;i<n;i++){if(dist(anchor,p[i])<90)continue;int d=direction(p[i].x-anchor.x,p[i].y-anchor.y);if(!z||out[z-1]!=char('0'+d)){if(z<31)out[z++]=char('0'+d);}anchor=p[i];}out[z]=0;return z;}
-static inline int score(const P*a,const P*b){int d=0;for(int i=0;i<N;i++)d+=dist(a[i],b[i]);int s=100-d*100/(N*1024);return s<0?0:s;}
 static inline int directionSimilarity(const char*x,int nx,const char*y,int ny){if(nx==ny){int i=0;while(i<nx&&x[i]==y[i])++i;if(i==nx)return 100;}
  // Exact bit-parallel Levenshtein distance for longer compass strings.
  // Keep the small dynamic-programming path for short strings and any
@@ -60,15 +59,8 @@ static inline int directionSimilarity(const char*x,int nx,const char*y,int ny){i
  if(nx>0&&nx<=31&&ny>0&&ny<=31&&nx*ny>=48){unsigned masks[8]{};bool compass=true;for(int i=0;i<nx;i++){unsigned k=(unsigned)(x[i]-'0');if(k>=8){compass=false;break;}masks[k]|=1u<<i;}
   if(compass){unsigned pv=~0u,mv=0,high=1u<<(nx-1);int edits=nx;for(int i=0;i<ny;i++){unsigned k=(unsigned)(y[i]-'0');unsigned eq=k<8?masks[k]:0,xv=eq|mv,xh=(((eq&pv)+pv)^pv)|eq;unsigned ph=mv|~(xh|pv),mh=pv&xh;edits+=(ph&high)!=0;edits-=(mh&high)!=0;ph=(ph<<1)|1u;mh<<=1;pv=mh|~(xv|ph);mv=ph&xv;}return 100-100*edits/rmax(nx,ny);}}
  int d[33];for(int j=0;j<=ny;j++)d[j]=j;for(int i=1;i<=nx;i++){int prev=d[0];d[0]=i;for(int j=1;j<=ny;j++){int old=d[j],v=prev+(x[i-1]!=y[j-1]);if(d[j]+1<v)v=d[j]+1;if(d[j-1]+1<v)v=d[j-1]+1;d[j]=v;prev=old;}}return 100-100*d[ny]/rmax(1,rmax(nx,ny));}
-static inline int hybrid(const P*a,const P*b){char x[32],y[32];int nx=sequence(a,N,x),ny=sequence(b,N,y);return (score(a,b)*9+directionSimilarity(x,nx,y,ny))/10;}
-// Exact upper bound: the direction term cannot exceed 100. Skip only comparisons
-// that cannot improve the best score, preserving the original match semantics.
-static inline int bestShapeScorePrepared(const P* normalized,const char* seq,int sn,const P (*samples)[N],int count){int best=0;for(int i=0;i<count;i++){int base=score(normalized,samples[i]);if((base*9+100)/10<=best)continue;char y[32];int ny=sequence(samples[i],N,y);best=rmax(best,(base*9+directionSimilarity(seq,sn,y,ny))/10);if(best==100)break;}return best;}
-static inline int bestShapeScore(const P* normalized,const P (*samples)[N],int count){char seq[32];int sn=sequence(normalized,N,seq);return bestShapeScorePrepared(normalized,seq,sn,samples,count);}
-
-// Keep the legacy sensitivity gate for compatibility with existing training data.
-// Among accepted samples rank by continuous, ordered geometric evidence instead
-// of rounded percentages or hard eight-direction bin boundaries.
+// Retain geometric ranking for the editor's built-in template snapping.
+// Live gesture acceptance and ranking are handled by angular_recognition.hpp.
 // Compare point positions, local stroke vectors at two scales, and both ends.
 // Rank the 70 normalized points using integer arithmetic. Scale chord spans
 // to retain approximately the same relative stroke lengths as at 48 points.
@@ -76,13 +68,6 @@ struct RankedShape {int score; long long rank;};
 static constexpr long long shapeRankMax=1000000000LL;
 static constexpr int shortChordSpan=6,longChordSpan=18,endpointWeight=18;
 static inline int chordError(const P*a,const P*b,int span){int d=0;for(int k=span;k<N;k++){P av{a[k].x-a[k-span].x,a[k].y-a[k-span].y},bv{b[k].x-b[k-span].x,b[k].y-b[k-span].y};d+=dist(av,bv);}return d;}
-static inline long long shapeRank(const P*a,const P*b,int pointError){
- // Local vectors distinguish bends and hooks; longer chords tolerate small
- // corner-timing differences. Endpoints help distinguish open/closed strokes.
- int ends=dist(a[0],b[0])+dist(a[N-1],b[N-1]);
- long long loss=6LL*pointError+4LL*chordError(a,b,shortChordSpan)+2LL*chordError(a,b,longChordSpan)+(long long)endpointWeight*ends;
- return shapeRankMax-loss;
-}
 // Average similarity alone can hide a severely mismatched suffix. Independent
 // geometric guards reject a wrong ending, sustained local deviation or substantial
 // extra travel, while allowing normal variations and small terminal hooks.
@@ -119,12 +104,4 @@ static inline RankedShape rankedShapePrepared(const P*norm,const char*seq,int sn
   if(rank>best.rank||(rank==best.rank&&s>best.score))best={s,rank};
   if(best.rank==shapeRankMax)break;
  }return best;
-}
-
-// Choose the medoid of a legacy gesture library: the actual sample with the
-// smallest sum of geometric losses to all other samples. Ties retain the first.
-static inline int representativeShape(const P (*samples)[N],int count){
- if(count<=1)return 0;long long losses[64]{};
- for(int i=0;i<count;i++)for(int j=0;j<i;j++){int d=0;for(int k=0;k<N;k++)d+=dist(samples[i][k],samples[j][k]);long long loss=shapeRankMax-shapeRank(samples[i],samples[j],d);losses[i]+=loss;losses[j]+=loss;}
- int best=0;for(int i=1;i<count;i++)if(losses[i]<losses[best])best=i;return best;
 }
