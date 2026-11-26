@@ -54,7 +54,9 @@ struct PointerWindowLookup {
   HWND result=h;for(int i=0;i<16;++i){POINT p=point;if(!ScreenToClient(result,&p))break;HWND c=ChildWindowFromPointEx(result,p,7);if(!c||c==result||GetAncestor(c,2)!=h)break;result=c;}return result;
  }
 };
-static HWND gestureWindowAt(POINT point){HWND hit=WindowFromPoint(point);HWND root=hit?GetAncestor(hit,2):nullptr;PointerWindowLookup lookup{point,root?root:hit};return mgtaskview::resolve(hit,lookup);}
+static HWND gestureWindowAtHit(POINT point,HWND hit){HWND root=hit?GetAncestor(hit,2):nullptr;PointerWindowLookup lookup{point,root?root:hit};return mgtaskview::resolve(hit,lookup);}
+static HWND gestureWindowAt(POINT point){return gestureWindowAtHit(point,WindowFromPoint(point));}
 #else
+static HWND gestureWindowAtHit(POINT,HWND hit){return hit;}
 static HWND gestureWindowAt(POINT point){return WindowFromPoint(point);}
 #endif
