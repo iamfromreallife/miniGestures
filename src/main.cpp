@@ -39,7 +39,7 @@ static int modalCreateButton=0;static bool dialogOwnerLimited=false;static bool 
 static int appCategory=-1;static int categorySelection=-1;static HWND popup=nullptr,drawCanvas=nullptr;static HWND settingsWnd=nullptr;static HWND settingsControls[164]{};static bool settingsLoading=false;static void openSettingsView();static void closeSettingsView();static void updateSettingsTheme();
 static void updateTrayIcon();
 static void indicatorThemeChanged();
-static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.13";
+static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.14";
 static void failedGestureLabel(W* b,int cap,const W* name,int score){
  static const W* const failed[]={L"Gesture recognition failed",L"Falha no reconhecimento do gesto",L"Error de reconocimiento del gesto",L"Échec de la reconnaissance du geste",L"Gestenerkennung fehlgeschlagen",L"Riconoscimento del gesto non riuscito"};
  static const W* const similar[]={L" — Similar to ",L" — Semelhante a ",L" — Similar a ",L" — Similaire à ",L" — Ähnlich wie ",L" — Simile a "};
@@ -191,11 +191,16 @@ struct PaneInteraction{
  }
  ~PaneInteraction(){HWND after=GetFocus();if(after!=before)selectPaneHeading(paneForWindow(after));}
 };
-static int gestureSidebarWidth(){return sidebarWidth+((!settings&&page!=2)?gestureSidebarExtra:0);}
+// Keep the existing Global Gestures minimum for every tab. The three-pane
+// Applications view distributes that same space among narrower columns.
+static constexpr int globalGestureSidebarWidth=sidebarWidth+gestureSidebarExtra;
+static constexpr int compactAppSidebarWidth=128,compactAppGestureWidth=144;
+static int gestureSidebarWidth(){return !settings&&page==1?compactAppGestureWidth:!settings&&page==0?globalGestureSidebarWidth:sidebarWidth;}
+static int editorLabelGap(){return !settings&&page==1?16:labelGap;}
 static int compactClientWidth(){if(!ctrl(TAB0))return 720+gestureSidebarExtra;int tabs[]={TAB0,TAB1,TAB2};
  int editor=maxn(250,maxn(groupWidth(shapeButtons,3),groupWidth(actionButtons,4)));editor=maxn(editor,captionWidth(RECBTN)+captionWidth(KEYCLEAR)+96);editor=maxn(editor,captionWidth(BROWSEBTN)+140);
- int labels=0;for(int i=0;i<4;i++)labels=maxn(labels,labelColumn(i));if(!settings&&page==1)labels=maxn(labels,labelColumn(4));
- int footer=maxn(114,captionWidth(SAVEBTN))+captionWidth(IMPORTBTN)+captionWidth(EXPORTBTN)+36;return maxn(610,maxn(footer,maxn(groupWidth(tabs,3)+captionWidth(SETBTN)+36,gestureSidebarWidth()+50+labels+editor+(!settings&&page==1?196:0))));}
+ int labels=0;for(int i=0;i<4;i++)labels=maxn(labels,labelColumn(i)); // Same language/DPI-dependent minimum on every page.
+ int footer=maxn(114,captionWidth(SAVEBTN))+captionWidth(IMPORTBTN)+captionWidth(EXPORTBTN)+36;return maxn(610,maxn(footer,maxn(groupWidth(tabs,3)+captionWidth(SETBTN)+36,globalGestureSidebarWidth+50+labels+editor)));}
 static constexpr int minimumClientHeight=704;
 static constexpr DWORD mainStyle=0x00cf0000|0x02000000;
 static POINT minimumOuter(HWND h){
@@ -221,7 +226,10 @@ static void relayout(){
    SetWindowPos(editorContent,nullptr,0,0,maxn(1,rr.right),maxn(1,rr.bottom),4|16|0x200|0x100);}
  memset(logicalPlace,0,sizeof(logicalPlace));memset(place,0,sizeof(place));int w=maxn(1,rr.right*96/dpi),h=maxn(1,rr.bottom*96/dpi);virtualW=px(w);virtualH=px(h);
  const int margin=12,gap=3,vgap=5,fieldH=22,pitch=26,buttonH=footerButtonHeight;
- bool apps=!settings&&page==1;int appWidth=apps?176:0,offset=apps?appWidth+12:0;int left=gestureSidebarWidth()+clamp((w-compactClientWidth()+gestureSidebarWidth()-sidebarWidth)/5,0,180),x=offset+left+margin+18,lab=labelColumn(labelView()),fx=x+lab;int fw=w-x-margin,ed=fw-lab;
+ bool apps=!settings&&page==1;int extra=maxn(0,w-compactClientWidth());
+ int appWidth=apps?compactAppSidebarWidth+clamp(extra/12,0,48):0,offset=apps?appWidth+12:0;
+ int left=gestureSidebarWidth()+clamp(apps?extra/8:(extra+gestureSidebarWidth()-sidebarWidth)/5,0,apps?100:180);
+ int labelGapHere=editorLabelGap(),x=offset+left+margin+18,lab=labelColumn(labelView())-labelGap+labelGapHere,fx=x+lab;int fw=w-x-margin,ed=fw-lab;
  int base=contentTop+paneTitlePitch;
  hide(TOGGLE);
  int tabids[]={TAB0,TAB1,TAB2};int tx=margin,setw=captionWidth(SETBTN)+14;
@@ -244,14 +252,14 @@ static void relayout(){
 
  pos(APPGEST,x,contentTop,fw,buttonH,false);pos(APPBACK,x,contentTop,100,buttonH,false);
  for(int id=NAMEBOX;id<=STARTBOX;id++)if(id!=SAVEBTN)hide(id);for(int id=LABNAME;id<=ACTHINT;id++)hide(id);hide(TRAIN);hide(LABSELECT);hide(EXECBOX);hide(LABEXEC);hide(LABSENSHELP);hide(CONFIRMBOX);hide(INDICATORBOX);hide(TOPBOX);hide(STARTWINBOX);hide(ADMINBOX);hide(ADMINHELP);hide(ADMINSTATUS);hide(ADDITIONALHEADER);hide(THEMEBOX);hide(LABTHEME);hide(TRAILCOLOR);hide(TRAILWIDTH);hide(LABTRAILCOLOR);hide(LABTRAILWIDTH);hide(TRAILPICK);hide(TRAILRESET);hide(TASKBARBOX);hide(FULLSCREENBOX);hide(EXPATHBOX);hide(LABEXPATH);
- int y=base;auto row=[&](int l,int f){pos(l,x,y,lab-labelGap,fieldH);pos(f,fx,y,ed,flatCombo(f)?190:fieldH);y+=pitch;};
+ int y=base;auto row=[&](int l,int f){pos(l,x,y,lab-labelGapHere,fieldH);pos(f,fx,y,ed,flatCombo(f)?190:fieldH);y+=pitch;};
  if((gst||rul)&&categorySelection>=0){pos(LABSELECT,x,y+4,fw,60);txt(LABSELECT,rul?(cfg.lang==1?L"Selecione ou adicione uma exclusão nesta categoria.":L"Select or add an exclusion in this category."):et(CATEGORY_HELP));}
  else if(gst){row(LABNAME,NAMEBOX);pos(ENABLEBOX,fx,y,ed,20);y+=24;row(LABTRIGGER,TRIGGERBOX);
-  int shapeH=128;pos(LABTRAIN,x,y+2,lab-labelGap,22);pos(TRAIN,fx,y,ed,shapeH);y+=shapeH+vgap;buttonGroup(shapeButtons,3,fx,y,ed,buttonH);y+=buttonH+vgap;
-  row(LABEXEC,EXECBOX);pos(LABACTION,x,y+2,lab-labelGap,22);int al=clamp(h-y-footerOffset-(vgap+buttonH+vgap+pitch+28+8+24+3*pitch+2),38,64);pos(ACTLIST,fx,y,ed,al);y+=al+vgap;buttonGroup(actionButtons,4,fx,y,ed,buttonH);y+=buttonH+vgap;
-  int ar=captionWidth(ACTREC);pos(LABPARAM,x,y,lab-labelGap,fieldH);pos(ARGBOX,fx,y,ed-ar-gap,fieldH);pos(ACTREC,fx+ed-ar,y,ar,fieldH);y+=pitch;pos(ACTHINT,fx,y,ed,28);y+=36;pos(ADDITIONALHEADER,x,y,fw,20);y+=24;row(LABBUTTON,BUTTONBOX);row(LABMOD,MODBOX);
-  int rec=captionWidth(RECBTN),clear=captionWidth(KEYCLEAR),input=ed-rec-clear-2*gap;pos(LABKEY,x,y,lab-labelGap,fieldH);pos(KEYBOX,fx,y,input,fieldH);pos(RECBTN,fx+input+gap,y,rec,fieldH);pos(KEYCLEAR,fx+input+rec+2*gap,y,clear,fieldH);y+=pitch;pos(TESTBTN,x,h-footerOffset,maxn(76,captionWidth(TESTBTN)),buttonH);
- }else if(apps){pos(LABSELECT,x,y+4,fw,60);txt(LABSELECT,cfg.lang==1?L"Selecione ou adicione uma aplicação.":L"Select or add an application to edit its gestures.");}else if(rul&&page==2&&!validExclusionIndex(cfg,ruleIndex)){pos(LABSELECT,x,y+4,fw,60);txt(LABSELECT,tr(NEW_EXCL));}else if(rul){row(LABNAME,NAMEBOX);pos(ENABLEBOX,fx,y,ed,20);y+=24;int browse=captionWidth(BROWSEBTN);pos(LABEXE,x,y,lab-labelGap,fieldH);pos(EXEBOX,fx,y,ed-browse-gap,fieldH);pos(BROWSEBTN,fx+ed-browse,y,browse,fieldH);y+=pitch;if(page==2)row(LABEXPATH,EXPATHBOX);row(LABCLASS,CLASSBOX);row(LABTITLE,TITLEBOX);if(page==1){pos(INHERITBOX,fx,y,ed,22);}else row(LABMODE,MODEBOX);}
+  int shapeH=128;pos(LABTRAIN,x,y+2,lab-labelGapHere,22);pos(TRAIN,fx,y,ed,shapeH);y+=shapeH+vgap;buttonGroup(shapeButtons,3,fx,y,ed,buttonH);y+=buttonH+vgap;
+  row(LABEXEC,EXECBOX);pos(LABACTION,x,y+2,lab-labelGapHere,22);int al=clamp(h-y-footerOffset-(vgap+buttonH+vgap+pitch+28+8+24+3*pitch+2),38,64);pos(ACTLIST,fx,y,ed,al);y+=al+vgap;buttonGroup(actionButtons,4,fx,y,ed,buttonH);y+=buttonH+vgap;
+  int ar=captionWidth(ACTREC);pos(LABPARAM,x,y,lab-labelGapHere,fieldH);pos(ARGBOX,fx,y,ed-ar-gap,fieldH);pos(ACTREC,fx+ed-ar,y,ar,fieldH);y+=pitch;pos(ACTHINT,fx,y,ed,28);y+=36;pos(ADDITIONALHEADER,x,y,fw,20);y+=24;row(LABBUTTON,BUTTONBOX);row(LABMOD,MODBOX);
+  int rec=captionWidth(RECBTN),clear=captionWidth(KEYCLEAR),input=ed-rec-clear-2*gap;pos(LABKEY,x,y,lab-labelGapHere,fieldH);pos(KEYBOX,fx,y,input,fieldH);pos(RECBTN,fx+input+gap,y,rec,fieldH);pos(KEYCLEAR,fx+input+rec+2*gap,y,clear,fieldH);y+=pitch;pos(TESTBTN,x,h-footerOffset,maxn(76,captionWidth(TESTBTN)),buttonH);
+ }else if(apps){pos(LABSELECT,x,y+4,fw,60);txt(LABSELECT,cfg.lang==1?L"Selecione ou adicione uma aplicação.":L"Select or add an application to edit its gestures.");}else if(rul&&page==2&&!validExclusionIndex(cfg,ruleIndex)){pos(LABSELECT,x,y+4,fw,60);txt(LABSELECT,tr(NEW_EXCL));}else if(rul){row(LABNAME,NAMEBOX);pos(ENABLEBOX,fx,y,ed,20);y+=24;int browse=captionWidth(BROWSEBTN);pos(LABEXE,x,y,lab-labelGapHere,fieldH);pos(EXEBOX,fx,y,ed-browse-gap,fieldH);pos(BROWSEBTN,fx+ed-browse,y,browse,fieldH);y+=pitch;if(page==2)row(LABEXPATH,EXPATHBOX);row(LABCLASS,CLASSBOX);row(LABTITLE,TITLEBOX);if(page==1){pos(INHERITBOX,fx,y,ed,22);}else row(LABMODE,MODEBOX);}
  int save=maxn(114,captionWidth(SAVEBTN));pos(SAVEBTN,w-margin-save,h-footerOffset,save,buttonH,!((gst||rul)&&categorySelection>=0)&&(!apps||appId)&&(!rul||page!=2||validExclusionIndex(cfg,ruleIndex)));if(rul&&page==2)EnableWindow(ctrl(DELBTN),listdata(LIST)!=-1);syncFooterLayout();applylayout();if(dialogOwnerLimited)for(int i=0;i<164;i++)if(ctrl(i)&&i!=CANCELCREATE&&IsWindowEnabled(ctrl(i)))EnableWindow(ctrl(i),0);applyPaneHeading();InvalidateRect(editorSurface(),nullptr,0);layoutBusy=false;
 }
 static void chooseTrailColor(){struct ColorDialog{DWORD size;HWND owner;H instance;DWORD result;DWORD* custom;DWORD flags;LP data;void* hook;const W* templ;};static DWORD custom[16]{};W b[16]{};GetWindowTextW(settingsControls[TRAILCOLOR],b,16);int color=effectiveTrailColor(cfg.trailColor);parseTrailHex(b,color);H dll=LoadLibraryExW(L"comdlg32.dll",nullptr,0x800);if(!dll)return;auto choose=(B(CB*)(ColorDialog*))GetProcAddress(dll,"ChooseColorW");ColorDialog d{sizeof(d),settingsWnd,nullptr,(DWORD)color,custom,3,0,nullptr,nullptr};if(choose&&choose(&d)){W hex[8];trailHex(d.result,hex);SetWindowTextW(settingsControls[TRAILCOLOR],hex);draftTrailAuto=false;}FreeLibrary(dll);}
@@ -802,7 +810,7 @@ static bool uiSelfTest(){
    relayout();UpdateWindow(mainwnd);
    for(int i=0;i<164;i++)if(ctrl(i)&&logicalPlace[i].show){RECT r{};GetClientRect(ctrl(i),&r);if(r.right<=0||r.bottom<=0)return false;UpdateWindow(ctrl(i));}
    // Runtime font measurement verifies the actual localized label fits its allocated rectangle.
-   {HDC dc=GetDC(mainwnd);if(!dc)return false;H old=SelectObject(dc,font);auto set=labelSet(labelView());bool fits=true;for(int i=0;i<set.count;i++){int id=set.ids[i];if(!logicalPlace[id].show)continue;W t[256]{};get(id,t,256);POINT ext{};if(!GetTextExtentPoint32W(dc,t,len(t),&ext)||ext.x>logicalPlace[id].w||ext.y>logicalPlace[id].h)fits=false;int target=pg==3?LANGBOX:NAMEBOX;if(logicalPlace[target].show&&logicalPlace[target].x-(logicalPlace[id].x+logicalPlace[id].w)<px(labelGap)-1)fits=false;}SelectObject(dc,old);ReleaseDC(mainwnd,dc);if(!fits)return false;}
+   {HDC dc=GetDC(mainwnd);if(!dc)return false;H old=SelectObject(dc,font);auto set=labelSet(labelView());bool fits=true;for(int i=0;i<set.count;i++){int id=set.ids[i];if(!logicalPlace[id].show)continue;W t[256]{};get(id,t,256);POINT ext{};if(!GetTextExtentPoint32W(dc,t,len(t),&ext)||ext.x>logicalPlace[id].w||ext.y>logicalPlace[id].h)fits=false;int target=pg==3?LANGBOX:NAMEBOX;if(logicalPlace[target].show&&logicalPlace[target].x-(logicalPlace[id].x+logicalPlace[id].w)<px(editorLabelGap())-1)fits=false;}SelectObject(dc,old);ReleaseDC(mainwnd,dc);if(!fits)return false;}
    if(logicalPlace[ADDITIONALHEADER].show!=(gstview()&&categorySelection<0))return false;
    for(int id=TAB0;id<=TAB2;id++){if(logicalPlace[id].w!=px(tabCaptionWidth(id))||logicalPlace[id].y!=logicalPlace[SETBTN].y||logicalPlace[id].h!=logicalPlace[SETBTN].h)return false;if(id>TAB0&&logicalPlace[id].x-logicalPlace[id-1].x-logicalPlace[id-1].w>px(3)+1)return false;}
    if(logicalPlace[SETBTN].x+logicalPlace[SETBTN].w>virtualW-px(12)+1||logicalPlace[SETBTN].x<logicalPlace[TAB2].x+logicalPlace[TAB2].w)return false;
@@ -844,6 +852,12 @@ static bool uiSelfTest(){
   RECT fsRow{},taskRow{};if(!GetWindowRect(sc(FULLSCREENBOX),&fsRow)||!GetWindowRect(sc(TASKBARBOX),&taskRow)||fsRow.left!=taskRow.left||absn(taskRow.top-fsRow.top-spx(25))>1||schecked(FULLSCREENBOX)!=bool(cfg.disableFullscreenGestures))return false;
   // The main window can switch tabs without closing or changing the settings form.
   W draft[8]{};GetWindowTextW(settingsControls[TRAILCOLOR],draft,8);setpage(0);W retained[8]{};GetWindowTextW(settingsControls[TRAILCOLOR],retained,8);if(!settingsWnd||!eq(draft,retained))return false;closeSettingsView();if(settingsWnd)return false;
+ }
+ // All tabs share the same minimum and must preserve the current outer width.
+ {setpage(0);const int minimum=compactClientWidth();auto outer=minimumOuter(mainwnd);SetWindowPos(mainwnd,nullptr,0,0,outer.x,outer.y,2|4|16);relayout();RECT before{};GetWindowRect(mainwnd,&before);
+  for(int pg=1;pg<3;pg++){setpage(pg);RECT after{};GetWindowRect(mainwnd,&after);if(compactClientWidth()!=minimum||after.right-after.left!=before.right-before.left||after.bottom-after.top!=before.bottom-before.top)return false;
+   if(pg==1&&(logicalPlace[APPLIST].w<px(compactAppSidebarWidth)||logicalPlace[LIST].w<px(compactAppGestureWidth)||logicalPlace[APPLIST].x+logicalPlace[APPLIST].w>logicalPlace[LIST].x||logicalPlace[LIST].x+logicalPlace[LIST].w>logicalPlace[EDITORHEAD].x))return false;
+  }setpage(0);RECT after{};GetWindowRect(mainwnd,&after);if(after.right-after.left!=before.right-before.left)return false;
  }
  // A programmatic undersize is corrected by relayout, just as a legacy saved size is.
  for(int pg=0;pg<3;pg++){setpage(pg);SetWindowPos(mainwnd,nullptr,0,0,300,300,4|16);relayout();RECT r{};GetClientRect(mainwnd,&r);if(r.right<px(compactClientWidth())||r.bottom<px(minimumClientHeight)||ctrl(HEAD)||logicalPlace[HEAD].show||(GetWindowLongPtrW(mainwnd,-16)&0x00300000))return false;if(!IsWindowVisible(footerWnd)||place[STATUSBOX].y!=r.bottom-px(21)||place[VERSIONBOX].x+place[VERSIONBOX].w!=r.right-px(12))return false;for(int i=0;i<164;i++)if(place[i].show&&ctrl(i)&&i!=STATUSBOX&&i!=VERSIONBOX){auto q=place[i];if(q.x<0||q.y<0||q.x+q.w>r.right||q.y+(flatCombo(i)?px(22):q.h)>r.bottom-px(21))return false;}}
