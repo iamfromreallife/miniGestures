@@ -83,7 +83,7 @@ static bool clickTargetSafe(const Target&t){if(t.pid==ownPid)return true;if(t.in
 #endif
  auto*p=coldProcess(t.pid,false);if(metadataWake)SetEvent(metadataWake);return p->safety==1;
 }
-static bool isOwnEditorFrame(HWND h){W cls[64]{};return h&&GetClassNameW(h,cls,64)&&eq(cls,L"miniGesturesMain");}
+static bool isOwnEditorFrame(HWND h){W cls[64]{};return h&&GetClassNameW(h,cls,64)&&(eq(cls,L"miniGesturesMain")||(eq(cls,L"miniGesturesController")&&IsWindowVisible(h)));}
 static bool targetForHook(HWND h,Target& out,bool& deferred,const Snapshot* snap=nullptr){if(!snap)snap=live;deferred=false;out=identity(h);if(out.hwnd==overlaywnd&&overlaywnd)return false;if(!out.hwnd||!out.pid)return false;
  // Both modeless editors are legitimate targets. Keep modal dialogs and recording protected.
  if(out.pid==ownPid){

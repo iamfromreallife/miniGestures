@@ -353,6 +353,7 @@ static bool transferEditorChildren(HWND from,HWND to){
   POINT p{r.left,r.top};if(!ScreenToClient(from,&p))return false;
   children[count++]={h,p};
  }
+ if(!count&&ctrl(TAB0))return false;
  // Preserve the native tab and z-order by moving bottom-to-top.
  int i=count-1;
  for(;i>=0;--i){
@@ -361,7 +362,7 @@ static bool transferEditorChildren(HWND from,HWND to){
  }
  if(i>=0){
   // Leave the original frame intact if the transfer cannot be completed.
-  for(int j=count-1;j>i;--j){const auto& v=children[j];if(parent(v.h,from))SetWindowPos(v.h,nullptr,v.position.x,v.position.y,0,0,1|16|0x200);}
+  for(int j=count-1;j>=0;--j){const auto& v=children[j];if(j<=i||parent(v.h,from))SetWindowPos(v.h,nullptr,v.position.x,v.position.y,0,0,1|16|0x200);}
   return false;
  }
  return true;
@@ -532,7 +533,7 @@ static LR CB canvasproc(HWND h,UINT m,WP w,LP l){
 }
 static LR CB overlayproc(HWND h,UINT m,WP w,LP l){if(m==0x84)return -1;if(m==0x14)return 1;if(m==0xf){PAINT p;BeginPaint(h,&p);EndPaint(h,&p);return 0;}return DefWindowProcW(h,m,w,l);}
 static HICON desiredTrayIcon(){if(updateAvailable){HICON icon=cfg.enabled?updateIcon:pausedUpdateIcon;if(icon)return icon;}return !cfg.enabled&&pausedIcon?pausedIcon:appicon;}
-static void updateTrayIcon(){if(!trayAdded||exiting)return;HICON icon=desiredTrayIcon();if(icon==trayCurrentIcon)return;NID change{};change.cbSize=sizeof(change);change.hWnd=mainwnd;change.uID=1;change.uFlags=2;change.hIcon=icon;if(Shell_NotifyIconW(1,&change))trayCurrentIcon=icon;}
+static void updateTrayIcon(){if(!trayAdded||exiting)return;HICON icon=desiredTrayIcon();if(icon==trayCurrentIcon)return;NID change{};change.cbSize=sizeof(change);change.hWnd=controllerwnd;change.uID=1;change.uFlags=2;change.hIcon=icon;if(Shell_NotifyIconW(1,&change))trayCurrentIcon=icon;}
 static void tray(){trayClicks={};nid={};nid.cbSize=sizeof(nid);nid.hWnd=controllerwnd;nid.uID=1;nid.uFlags=1|2|4;nid.uCallbackMessage=0x8010;nid.hIcon=desiredTrayIcon();cp(nid.szTip,L"miniGestures",128);trayAdded=Shell_NotifyIconW(0,&nid)!=0;trayCurrentIcon=trayAdded?nid.hIcon:nullptr;}
 static void appendEditorShape(const P*points);
 static void templates(){if(edit.count>=MAXS){MessageBoxW(mainwnd,et(SHAPE_LIMIT),L"miniGestures",0x30);return;}HMENU m=CreatePopupMenu(),pairs=CreatePopupMenu(),letters=CreatePopupMenu(),reverse=CreatePopupMenu(),symbols=CreatePopupMenu();const W* arrows[]={L"↑",L"↗",L"→",L"↘",L"↓",L"↙",L"←",L"↖"};for(int a=0;a<8;a++){AppendMenuW(m,0,2000+a,arrows[a]);HMENU sub=CreatePopupMenu();for(int b=0;b<8;b++){W t[12];cp(t,arrows[a],12);cat(t,L"  ",12);cat(t,arrows[b],12);AppendMenuW(sub,0,2100+a*8+b,t);}AppendMenuW(pairs,0x10,(up)sub,arrows[a]);}AppendMenuW(m,0x10,(up)pairs,tr(DIRECTION_PAIRS));for(int i=0;i<SHAPES;i++){AppendMenuW(i<36?letters:symbols,0,2200+i,shapes[i].name);AppendMenuW(reverse,0,2300+i,shapes[i].name);}AppendMenuW(m,0x10,(up)letters,tr(LETTERS_NUMBERS));AppendMenuW(m,0x10,(up)symbols,tr(SYMBOLS));AppendMenuW(m,0x10,(up)reverse,tr(REVERSED));RECT r;GetWindowRect(ctrl(PRESETBTN),&r);UINT a=TrackPopupMenu(m,0x102,r.left,r.bottom,0,mainwnd,nullptr);DestroyMenu(m);P p[N];if(templatePoints(a,p))appendEditorShape(p);}
