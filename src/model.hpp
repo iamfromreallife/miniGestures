@@ -22,7 +22,7 @@ template<class T> struct Records{
  Records()=default;Records(const Records&)=delete;Records& operator=(const Records&)=delete;
  ~Records(){freep(p);}
  void clear(){freep(p);p=nullptr;capacity=0;}
- bool reserve(int n){if(n<0)return false;if(n<=capacity)return true;int k=capacity?capacity:1;while(k<n){if(k>0x7fffffff/2){k=n;break;}k*=2;}if((up)k>((up)-1)/sizeof(T))return false;T*q=(T*)alloc(sizeof(T)*(up)k);if(!q)return false;if(capacity)memcpy(q,p,sizeof(T)*(up)capacity);freep(p);p=q;capacity=k;return true;}
+ bool reserve(int n){if(n<0)return false;if(n<=capacity)return true;int k=capacity?capacity:1;while(k<n){if(k>0x7fffffff/2){k=n;break;}k*=2;}if((up)k>((up)-1)/sizeof(T))return false;T*q=(T*)allocRaw(sizeof(T)*(up)k);if(!q)return false;if(capacity)memcpy(q,p,sizeof(T)*(up)capacity);memset(q+capacity,0,sizeof(T)*(up)(k-capacity));freep(p);p=q;capacity=k;return true;}
  T& operator[](int i){return p[i];}const T& operator[](int i)const{return p[i];}
  operator T*(){return p;}operator const T*()const{return p;}
  void swap(Records& o){T*t=p;p=o.p;o.p=t;int n=capacity;capacity=o.capacity;o.capacity=n;}
@@ -134,7 +134,7 @@ static inline bool sameShape(const P*a,const P*b){for(int i=0;i<N;i++)if(a[i].x!
 struct Conflict{int other=-1,ownShape=-1,otherShape=-1,kind=0;};
 // Drawn shapes are ranked at runtime, never treated as duplicate bindings.
 static inline Conflict pairConflict(const Config&c,const Gesture&g,const Gesture&o,int i){if(!g.enabled||!g.steps||!o.enabled||!o.steps||o.profile!=g.profile)return {};if(g.hotkey&&g.hotkey==o.hotkey&&g.hotmods==o.hotmods)return {i,-1,-1,1};if(g.trigger!=o.trigger||g.trigger==8||g.mods!=o.mods||activationButton(c,g)!=activationButton(c,o))return {};if(g.trigger)return {i,-1,-1,2};return {};}
-static inline Conflict bindingConflict(const Config&c,const Gesture&g,int ignore){for(int i=0;i<c.ng;i++){if(i==ignore)continue;auto f=pairConflict(c,g,c.g[i],i);if(f.other>=0)return f;}return {};}
+static inline Conflict bindingConflict(const Config&c,const Gesture&g,int ignore){if(!g.enabled||!g.steps||(!g.hotkey&&(!g.trigger||g.trigger==8)))return {};for(int i=0;i<c.ng;i++){if(i==ignore)continue;auto f=pairConflict(c,g,c.g[i],i);if(f.other>=0)return f;}return {};}
 static inline void removeBinding(Gesture&g,Conflict f){if(f.kind==1){g.hotkey=g.hotmods=0;if(g.trigger==8||(!g.trigger&&!g.count))g.enabled=0;}else if(f.kind==2){g.trigger=8;if(!g.hotkey)g.enabled=0;}else if(f.kind==3&&f.otherShape>=0&&f.otherShape<g.count){for(int i=f.otherShape;i<g.count-1;i++)memcpy(g.samples[i],g.samples[i+1],sizeof(g.samples[i]));g.count--;if(!g.count&&!g.hotkey)g.enabled=0;}}
 
 // Copy all action and binding data, but never introduce an active conflict.
