@@ -1,6 +1,7 @@
 #pragma once
+#include "angular_recognition.hpp"
 // Platform-independent integer recognition. Translation/scale normalized, order preserved.
-struct P{int x,y;}; constexpr int legacyShapePoints=48,N=70,maxDrawingPoints=1000,minSegmentPx=3;
+struct P{int x,y;}; constexpr int legacyShapePoints=48,N=70,maxDrawingPoints=1000,minSegmentPx=6;
 static constexpr int maxGestureTimeoutMs=60000;
 // Unsigned subtraction also handles GetTickCount wrapping during a stroke.
 static inline bool gestureTimeoutExpired(unsigned start,unsigned now,int limit){return limit>0&&now-start>=(unsigned)limit;}
@@ -20,16 +21,16 @@ static inline int pathlen(const P*p,int n){int d=0;for(int i=1;i<n;i++)d+=dist(p
 // Preserve fractional arc length and coordinates until the final normalized
 // integer representation. The previous integer-pixel interpolation could
 // collapse adjacent points on small gestures and distort corners.
-static inline long long arcDistance(P a,P b){long long x=(long long)a.x-b.x,y=(long long)a.y-b.y;if(x<0)x=-x;if(y<0)y=-y;return x>y?8*x+3*y:8*y+3*x;}
+static inline double arcDistance(P a,P b){return 8*mgangular::distance(a,b);}
 static inline int nearestInt(double x){return (int)(x<0?x-0.5:x+0.5);}
 static inline bool normalize(const P*p,int n,P*out){
  if(n<2||n>maxDrawingPoints)return false;
- long long total=0;for(int i=1;i<n;i++)total+=arcDistance(p[i-1],p[i]);if(total<8*minSegmentPx)return false;
+ double total=0;for(int i=1;i<n;i++)total+=arcDistance(p[i-1],p[i]);if(total<8*minSegmentPx)return false;
  struct Precise{double x,y;};Precise points[N];
- int j=1;long long run=0,d=arcDistance(p[0],p[1]);
+ int j=1;double run=0,d=arcDistance(p[0],p[1]);
  for(int k=0;k<N;k++){
-  // All arc lengths are in eighth-pixel units; the rational target stays exact.
-  long long target=total*k;
+  // Euclidean arc length, kept in double precision until storage.
+  double target=total*k;
   while(j<n-1&&(run+d)*(N-1)<target){run+=d;++j;d=arcDistance(p[j-1],p[j]);}
   double t=d?(double)(target-run*(N-1))/((double)d*(N-1)):1.0;
   if(t<0)t=0;if(t>1)t=1;
