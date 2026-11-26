@@ -37,7 +37,7 @@ static int modalCreateButton=0;static bool dialogOwnerLimited=false;static bool 
 static int appCategory=-1;static int categorySelection=-1;static HWND popup=nullptr,drawCanvas=nullptr;static HWND settingsWnd=nullptr;static HWND settingsControls[164]{};static bool settingsLoading=false;static void openSettingsView();static void closeSettingsView();static void updateSettingsTheme();
 static void updateTrayIcon();
 static void indicatorThemeChanged();
-static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.21";
+static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.22";
 static void failedGestureLabel(W* b,int cap,const W* name,int score){
  static const W* const failed[]={L"Gesture recognition failed",L"Falha no reconhecimento do gesto",L"Error de reconocimiento del gesto",L"Échec de la reconnaissance du geste",L"Gestenerkennung fehlgeschlagen",L"Riconoscimento del gesto non riuscito"};
  static const W* const similar[]={L" — Similar to ",L" — Semelhante a ",L" — Similar a ",L" — Similaire à ",L" — Ähnlich wie ",L" — Simile a "};

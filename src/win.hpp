@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 // Minimal declarations of the documented Win32 ABI for a freestanding cross-build.
 using u8=unsigned char; using u16=unsigned short; using u32=unsigned int; using i32=int; using u64=unsigned long long; using up=unsigned long long; using ip=long long; using W=wchar_t; using B=int; using H=void*; using HWND=H; using HANDLE=H; using HDC=H; using HFONT=H; using HBRUSH=H; using HICON=H; using HINSTANCE=H; using HMENU=H; using WP=up; using LP=ip; using LR=ip; using DWORD=u32; using UINT=u32;
 #define API extern "C" __declspec(dllimport)
@@ -21,6 +22,12 @@ struct PAINT{HDC hdc;B fErase;RECT rcPaint;B fRestore,fIncUpdate;u8 reserved[32]
 struct KEYHOOK{DWORD vkCode,scanCode,flags,time;up extra;};
 struct MOUSEHOOK{POINT pt;DWORD mouseData,flags,time;up extra;};
 struct MI{int dx,dy;DWORD mouseData,dwFlags,time;up extra;};struct KI{u16 vk,scan;DWORD flags,time;up extra;};struct INPUT{DWORD type;union{MI mi;KI ki;};};
+// Win32 x64 SDK ABI: prove the marker is written/read at the correct offset.
+static_assert(sizeof(MOUSEHOOK)==32&&offsetof(MOUSEHOOK,extra)==24);
+static_assert(sizeof(KEYHOOK)==24&&offsetof(KEYHOOK,extra)==16);
+static_assert(sizeof(MI)==32&&offsetof(MI,extra)==24);
+static_assert(sizeof(KI)==24&&offsetof(KI,extra)==16);
+static_assert(sizeof(INPUT)==40&&offsetof(INPUT,mi)==8&&offsetof(INPUT,ki)==8);
 struct NID{DWORD cbSize;HWND hWnd;UINT uID,uFlags,uCallbackMessage;HICON hIcon;W szTip[128];DWORD dwState,dwStateMask;W szInfo[256];UINT version;W szInfoTitle[64];DWORD dwInfoFlags;u8 guid[16];HICON hBalloonIcon;};
 struct MONITOR{DWORD cbSize;RECT rcMonitor,rcWork;DWORD dwFlags;};
 struct MINMAX{POINT reserved,maxSize,maxPos,minTrack,maxTrack;};

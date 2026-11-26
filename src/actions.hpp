@@ -1,7 +1,8 @@
 #pragma once
 #include "model.hpp"
 #include "capture_log.hpp"
-constexpr up MARK=0x53544c495445ULL;
+// Fits in 32 bits even when an input bridge transports ULONG_PTR as DWORD.
+constexpr up MARK=0x4D474553ULL;
 struct ActionDef{const W*name[6];const W*hint;int vk,mods;};
 #define A(en,pt,es,fr,de,it,h,k,m) {{L##en,L##pt,L##es,L##fr,L##de,L##it},L##h,k,m}
 static const ActionDef defs[]={

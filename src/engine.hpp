@@ -169,8 +169,9 @@ current.cursor=metadataTarget(WindowFromPoint(p),paths,next);auto fg=identity(Ge
 // Posting directly to an independently scheduled worker can race that
 // release. Never call SendInput from WH_MOUSE_LL itself.
 static constexpr UINT MSG_REPLAY_CLICK=0x800d,MSG_RELAY_JOB=0x800f;
+static mgremote::ReplayGuard replayGuard;
 static bool replay(int button){
- if(button<1||button>5||!running||!hooktid)return false;
+ if(button<1||button>5||!running||!hooktid||replayGuard.active)return false;
  DWORD tick=GetTickCount();
  MG_LOG("click replay queued button enqueueTick",button,tick);
  return PostThreadMessageW(hooktid,MSG_REPLAY_CLICK,(WP)button,(LP)tick)!=0;
@@ -179,12 +180,15 @@ static void replayQueuedClick(WP button,LP tick){
  if(!running||button<1||button>5)return;
  DWORD before=GetTickCount();
  MG_LOG("click replay dispatch button queueMs",button,before-(DWORD)tick);
+ POINT p{};bool known=GetCursorPos(&p)!=0;
+ replayGuard.begin((int)button,p.x,p.y,known);
  bool ok=click((int)button);
 #ifdef _WIN32
  DWORD error=ok?0:GetLastError();
 #else
  DWORD error=0;
 #endif
+ replayGuard.end(GetTickCount(),ok);
  MG_LOG("click replay completion button success injectionMs error",button,ok,GetTickCount()-before,error);
 }
 
@@ -233,11 +237,20 @@ static LR CB hookproc(int n,WP msg,LP lp){
  InterlockedIncrement(&mouseEvents);auto&m=*(MOUSEHOOK*)lp;auto pass=[&](){return CallNextHookEx(mousehook,n,msg,lp);};
  if(msg!=0x200)MG_LOG("mouse edge message flags own buttonData capButton used moved blocked",msg,m.flags,m.extra==MARK,m.mouseData,cap.button,cap.used,cap.moved,blocked);
  int b=mb((UINT)msg,m.mouseData);
+ // Own input must never enter the capture state machine, even if an input
+ // bridge stripped the marker while transporting our replacement click.
+ bool own=m.extra==MARK;
+ if(own||replayGuard.active||(replayGuard.phase&&b)){
+  if(replayGuard.bypass(m.flags,own,b,isdown((UINT)msg),isup((UINT)msg),m.pt.x,m.pt.y,GetTickCount())){
+   if(b)MG_LOG("replay input bypass message flags rawMarker active pending",msg,m.flags,m.extra,replayGuard.active,replayGuard.phase);
+   return pass();
+  }
+ }
  // Preserve the active stroke's input policy until its matching release.
  // Also drain any already-consumed injected rocker release after a settings change.
  bool allowExternal=cap.s?cap.s->c.allowRemoteInput!=0:live->c.allowRemoteInput!=0;
  if(b&&isup((UINT)msg)&&(injectedBlocked&(1u<<b)))allowExternal=true;
- if(!mgremote::accepts(m.flags,m.extra==MARK,allowExternal))return pass();
+ if(!mgremote::accepts(m.flags,own,allowExternal))return pass();
  if(b&&isup((UINT)msg)&&(blocked&(1<<b))){blocked&=~(1<<b);injectedBlocked&=~(1u<<b);if(!blocked&&!cap.button&&(!live->c.enabled||!live->mouseWanted))PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);return 1;}
  if(shapeRecording||!running||!live->c.enabled){if(cap.button&&b==cap.button&&isup((UINT)msg)){int old=cap.button;bool used=cap.used||(cap.moved&&(cap.mask&1)),exclusive=cap.swallow;resetcap();PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);if(exclusive&&(used||replay(old)))return 1;}return pass();}
  // A native tray menu is modal. Do not start a new capture while it is
