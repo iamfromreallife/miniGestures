@@ -2,7 +2,7 @@
 #include "base.hpp"
 #include <stddef.h>
 #include "recognition.hpp"
-constexpr int MAXS=1,legacyMaxShapes=64,MAXA=8;
+constexpr int MAXS=16,legacyMaxShapes=64,MAXA=8;
 constexpr int TASK_VIEW_ACTION=34, RETIRED_DELAY_ACTION=46, SHOW_MINIGESTURES_ACTION=62, FIRST_DESKTOP_ACTION=63, LAST_DESKTOP_ACTION=64, RETIRED_ACTION_ID=65, KILL_APP_ACTION=66, BROWSER_HOME_ACTION=67, ACTION_COUNT=68;
 static inline bool retiredAction(int type){return type==RETIRED_ACTION_ID||type==RETIRED_DELAY_ACTION;}
 static inline bool elevationAction(int type){return type==23||type==KILL_APP_ACTION;}
@@ -41,9 +41,9 @@ struct RuntimeConfig:ConfigScalars{Gesture* g;Rule* a;Rule* e;GlobalBlock* block
 // Rocker right always starts with the left button, independently of the default.
 static inline int activationButton(const ConfigScalars&c,const Gesture&g){return g.trigger==6?1:(g.button?g.button:c.button);}
 struct BindingIndex{int mouse[6][16],keys[256][16];int* links(){return reinterpret_cast<int*>(this+1);}const int* links()const{return reinterpret_cast<const int*>(this+1);}};
-struct Snapshot{BindingIndex* index;mgangular::Signature* angular;volatile long refs;unsigned char buttons[6][16],keys[256][16];bool rules,pathRules,exclusionRules,mouseWanted,keyWanted;RuntimeConfig c;};
+struct Snapshot{BindingIndex* index;mgangular::Signature* angular;up* angularOffsets;volatile long refs;unsigned char buttons[6][16],keys[256][16];bool rules,pathRules,exclusionRules,mouseWanted,keyWanted;RuntimeConfig c;};
 static_assert(alignof(Snapshot)>=alignof(Gesture)&&alignof(Gesture)>=alignof(Rule),"Runtime snapshot alignment");
-static inline void retain(Snapshot*s){InterlockedIncrement(&s->refs);} static inline void release(Snapshot*s){if(s&&InterlockedExchangeAdd(&s->refs,-1)==1){freep(s->angular);freep(s->index);freep(s);}}
+static inline void retain(Snapshot*s){InterlockedIncrement(&s->refs);} static inline void release(Snapshot*s){if(s&&InterlockedExchangeAdd(&s->refs,-1)==1){freep(s->angularOffsets);freep(s->angular);freep(s->index);freep(s);}}
 // Immutable runtime snapshots contain only existing gestures and rules, not the
 // editor's unused fixed capacity or category records. Keep one slot for Test.
 static inline up snapshotBytes(const Config& c){return sizeof(Snapshot)+sizeof(Gesture)*maxn(1,c.ng)+sizeof(Rule)*((up)c.na+c.ne)+sizeof(GlobalBlock)*(up)c.nb;}
@@ -69,12 +69,15 @@ struct BindingRange{
  int advance(int i)const{return next?next[i]:i+1;}
  bool valid(int i)const{return i>=0&&i<s.c.ng;}
 };
+// Cache only populated samples, rather than sixteen signatures per gesture.
 static inline void cacheAngular(Snapshot& s){
- const auto& c=s.c;if(c.ng<=0||(up)c.ng>((up)-1)/sizeof(mgangular::Signature))return;
- bool any=false;for(int i=0;i<c.ng;i++){const auto& g=c.g[i];if(g.enabled&&g.steps&&!g.trigger&&g.count){any=true;break;}}
- if(!any)return;
- s.angular=(mgangular::Signature*)allocRaw((up)c.ng*sizeof(mgangular::Signature));if(!s.angular)return;
- for(int i=0;i<c.ng;i++){const auto& g=c.g[i];if(g.enabled&&g.steps&&!g.trigger&&g.count)s.angular[i]=mgangular::signature(g.samples[0],N);else s.angular[i].valid=false;}
+ const auto& c=s.c;if(c.ng<=0)return;
+ up total=0;for(int i=0;i<c.ng;i++){const auto& g=c.g[i];if(g.enabled&&g.steps&&!g.trigger&&g.count>0&&g.count<=MAXS)total+=(up)g.count;}
+ if(!total||total>((up)-1)/sizeof(mgangular::Signature)||(up)c.ng>((up)-1)/sizeof(up))return;
+ auto* offsets=(up*)allocRaw((up)c.ng*sizeof(up));if(!offsets)return;
+ auto* signatures=(mgangular::Signature*)allocRaw(total*sizeof(mgangular::Signature));if(!signatures){freep(offsets);return;}
+ up at=0;for(int i=0;i<c.ng;i++){const auto& g=c.g[i];offsets[i]=at;if(g.enabled&&g.steps&&!g.trigger&&g.count>0&&g.count<=MAXS)for(int k=0;k<g.count;k++)signatures[at++]=mgangular::signature(g.samples[k],N);}
+ s.angularOffsets=offsets;s.angular=signatures;
 }
 static inline Snapshot* buildSnapshot(const Config&c){if(!c.validCounts())return nullptr;auto*s=(Snapshot*)allocRaw(snapshotBytes(c));if(s){memset(s,0,sizeof(Snapshot));s->refs=1;static_cast<ConfigScalars&>(s->c)=c;s->c.g=(Gesture*)(s+1);s->c.a=(Rule*)(s->c.g+maxn(1,c.ng));s->c.e=s->c.a+c.na;s->c.blocks=(GlobalBlock*)(s->c.e+c.ne);if(c.nb)memcpy(s->c.blocks,c.blocks.p,sizeof(GlobalBlock)*(up)c.nb);if(c.ng)memcpy(s->c.g,c.g.p,sizeof(Gesture)*c.ng);if(c.na)memcpy(s->c.a,c.a.p,sizeof(Rule)*c.na);if(c.ne)memcpy(s->c.e,c.e.p,sizeof(Rule)*c.ne);for(int i=0;i<c.na;i++)if(c.a[i].enabled&&(*c.a[i].exe||*c.a[i].cls||*c.a[i].title||*c.a[i].path)){s->rules=true;s->pathRules|=*c.a[i].exe!=0||*c.a[i].path!=0;}for(int i=0;i<c.ne;i++)if(c.e[i].enabled&&(*c.e[i].exe||*c.e[i].cls||*c.e[i].title||*c.e[i].path)){s->rules=true;s->exclusionRules=true;s->pathRules|=*c.e[i].exe!=0||*c.e[i].path!=0;}for(int i=0;i<c.ng;i++){auto&g=c.g[i];if(!g.enabled)continue;if(g.hotkey>0&&g.hotkey<256&&g.hotmods>=0&&g.hotmods<16)s->keys[g.hotkey][g.hotmods]=1,s->keyWanted=true;int b=activationButton(c,g);if(b>=1&&b<=5&&g.mods>=0&&g.mods<16&&g.trigger>=0&&g.trigger<8&&(g.trigger||g.count))s->buttons[b][g.mods]|=1<<g.trigger,s->mouseWanted=true;}indexBindings(*s);cacheAngular(*s);}return s;}
 // Editor Test executes just the selected gesture; do not clone unrelated records.
