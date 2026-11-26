@@ -15,6 +15,8 @@
 #include <exdisp.h>
 #include <shlguid.h>
 #include <servprov.h>
+#include <UIAutomation.h>
+#include <cwchar>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -477,4 +479,46 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     // NativeStart already joins workers and saves configuration where safe.
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     return code;
+}
+
+
+// Only the existing metadata thread calls these routines. UI Automation may
+// perform cross-process RPC to Explorer, so never call it from WH_MOUSE_LL.
+namespace {
+IUIAutomation2* taskbarAutomation=nullptr;
+bool taskbarCom=false,taskbarAttempted=false;
+DWORD taskbarLastAttempt=0;
+bool initTaskbarAutomation(){
+ if(taskbarAutomation)return true;
+ DWORD now=GetTickCount();
+ if(taskbarAttempted&&now-taskbarLastAttempt<2000)return false;
+ taskbarAttempted=true;taskbarLastAttempt=now;
+ if(!taskbarCom){if(FAILED(CoInitializeEx(nullptr,COINIT_MULTITHREADED)))return false;taskbarCom=true;}
+ if(FAILED(CoCreateInstance(__uuidof(CUIAutomation8),nullptr,CLSCTX_INPROC_SERVER,__uuidof(IUIAutomation2),reinterpret_cast<void**>(&taskbarAutomation)))||!taskbarAutomation)return false;
+ // Bound provider wait times; fail conservatively on unsupported providers.
+ if(FAILED(taskbarAutomation->put_ConnectionTimeout(100))||FAILED(taskbarAutomation->put_TransactionTimeout(100))){
+  taskbarAutomation->Release();taskbarAutomation=nullptr;return false;
+ }
+ return true;
+}
+bool emptyTaskbarClass(const wchar_t* name){
+ if(!name)return false;
+ return wcscmp(name,L"Shell_TrayWnd")==0||wcscmp(name,L"Shell_SecondaryTrayWnd")==0||
+  wcscmp(name,L"Taskbar.TaskbarFrameAutomationPeer")==0||
+  wcscmp(name,L"Windows.UI.Input.InputSite.WindowClass")==0;
+}
+}
+extern "C" int WINAPI NativeTaskbarEmptyAt(int x,int y){
+ if(!initTaskbarAutomation())return 0;
+ IUIAutomationElement* element=nullptr;
+ if(FAILED(taskbarAutomation->ElementFromPoint(POINT{static_cast<LONG>(x),static_cast<LONG>(y)},&element))||!element)return 0;
+ BSTR cls=nullptr;CONTROLTYPEID type=0;
+ bool empty=SUCCEEDED(element->get_CurrentClassName(&cls))&&emptyTaskbarClass(cls)&&SUCCEEDED(element->get_CurrentControlType(&type))&&
+  (type==UIA_PaneControlTypeId||type==UIA_GroupControlTypeId||type==UIA_WindowControlTypeId||type==UIA_CustomControlTypeId||type==UIA_ToolBarControlTypeId);
+ if(cls)SysFreeString(cls);element->Release();return empty?1:0;
+}
+extern "C" void WINAPI NativeTaskbarProbeEnd(){
+ if(taskbarAutomation){taskbarAutomation->Release();taskbarAutomation=nullptr;}
+ if(taskbarCom){CoUninitialize();taskbarCom=false;}
+ taskbarAttempted=false;taskbarLastAttempt=0;
 }

@@ -6,13 +6,15 @@
 // controllerwnd is stable until process shutdown; mainwnd is UI-thread only.
 static HWND controllerwnd,mainwnd,overlaywnd; static DWORD hooktid,worktid,actiontid;static HANDLE hookthread,workerthread,actionthread,hookready,workready,actionready;static H mousehook,keyhook,diagkeyhook;static Snapshot* live;static volatile long running=1,hookok=0;static constexpr UINT MSG_CONFIG=0x8001,MSG_JOB=0x8002,MSG_RESULT=0x8003,MSG_TRAIL=0x8004,MSG_CLEAR=0x8005,MSG_EXECUTE=0x8006,MSG_RECORD=0x8007,MSG_GESTURE_TIMEOUT=0x8012;static volatile long recording=0,shapeRecording=0,trayMenuActive=0;
 static H engineStop,metadataWake;static HANDLE metathread;static DWORD metatid;
-static volatile long rulesActive=0,metadataPending=0,pendingJobs=0,actionStarted=0;
+static volatile long rulesActive=0,metadataPending=0,pendingJobs=0,actionStarted=0,taskbarProbeEnabled=0;
 static constexpr UINT MSG_METADATA=0x8008,MSG_ENGINE_READY=0x800a,MSG_REFRESH_HOOKS=0x800b;
 static constexpr int MAX_PENDING_JOBS=64;static constexpr UINT MSG_REARM=0x800c;static volatile long mouseEvents=0,mouseExpected=0,keyboardExpected=0;
 // A single coalesced metadata update from a separate thread. The hook only reads its own copy.
-struct MetadataPair {Target cursor,foreground;DWORD tick;RECT trayIcon;};
-// Written by the hook thread only, using the metadata message handoff.
-static RECT ownTrayIcon{};static DWORD ownTrayTick=0;
+#include "taskbar_empty.hpp"
+struct TaskbarHover{HWND root;POINT point;DWORD tick;bool empty;};
+struct MetadataPair {Target cursor,foreground;DWORD tick;TaskbarHover taskbar;};
+// Hook-owned immutable result of background accessibility hit testing.
+static TaskbarHover taskbarHover{};
 struct CachedTarget{Target t;DWORD tick;};static constexpr int META_CACHE=32;static CachedTarget metadata[META_CACHE]{};static int metaNext=0;static DWORD ownPid;static DWORD lastTrailTick;
 // Hook-owned copy of process metadata proactively collected by the worker.
 struct ProcessPath{DWORD pid,tick;int safety;W path[520];};
@@ -26,32 +28,32 @@ static bool shouldStop(){return !running||WaitForSingleObject(engineStop,0)==0;}
 static int waitMessage(MSG& m){if(shouldStop())return 0;int result=GetMessageW(&m,nullptr,0,0);if(result<0)(void)0;return result>0;}
 static Target identity(HWND h){Target t{};if(!h)return t;t.child=h;t.hwnd=GetAncestor(h,2);if(!t.hwnd)t.hwnd=h;GetWindowThreadProcessId(t.hwnd,&t.pid);return t;}
 #include "task_view_win.hpp"
-// Protect menus and notification overflow; taskbar capture is configurable.
-static bool shellTrayClick(HWND h,bool taskbarGestures,POINT point){
- if(!h)return false;HWND root=GetAncestor(h,2);if(!root)root=h;W name[96]{};
- if(!GetClassNameW(root,name,96))return false;
- if(eq(name,L"#32768")||eq(name,L"NotifyIconOverflowWindow")||eq(name,L"TopLevelWindowForOverflowXamlIsland"))return true;
- if(!eq(name,L"Shell_TrayWnd")&&!eq(name,L"Shell_SecondaryTrayWnd"))return false;
+// Menus and interactive taskbar items receive untouched native mouse input.
+static HWND taskbarRoot(HWND h){
+ if(!h)return nullptr;HWND root=GetAncestor(h,2);if(!root)root=h;W cls[96]{};
+ if(!GetClassNameW(root,cls,96))return nullptr;
+ return eq(cls,L"Shell_TrayWnd")||eq(cls,L"Shell_SecondaryTrayWnd")?root:nullptr;
+}
+static bool shellTrayClick(HWND h,bool taskbarGestures,POINT point,HWND validatedStart=nullptr){
+ if(!h)return false;HWND root=GetAncestor(h,2);if(!root)root=h;W cls[96]{};
+ if(!GetClassNameW(root,cls,96))return false;
+ if(eq(cls,L"#32768")||eq(cls,L"NotifyIconOverflowWindow")||eq(cls,L"TopLevelWindowForOverflowXamlIsland"))return true;
+ if(!eq(cls,L"Shell_TrayWnd")&&!eq(cls,L"Shell_SecondaryTrayWnd"))return false;
  if(!taskbarGestures)return true;
- // Even with taskbar gestures enabled, notification icons must receive
- // native mouse edges. Use a cached own-icon rectangle for XAML taskbars.
- if(GetTickCount()-ownTrayTick<=2000u&&point.x>=ownTrayIcon.left&&point.x<ownTrayIcon.right&&point.y>=ownTrayIcon.top&&point.y<ownTrayIcon.bottom)return true;
+ // A drawn stroke is re-resolved at its verified starting point. Do not
+ // require the pointer to still be there when the physical button is released.
+ if(validatedStart&&root==validatedStart)return false;
+ // Native notification controls are always protected, independently of UIA.
  for(HWND child=h;child&&child!=root;child=GetAncestor(child,1)){
-  W cls[96]{};if(GetClassNameW(child,cls,96)&&(eq(cls,L"TrayNotifyWnd")||eq(cls,L"SysPager")))return true;
+  W name[96]{};if(GetClassNameW(child,name,96)&&(eq(name,L"TrayNotifyWnd")||eq(name,L"SysPager")||eq(name,L"ToolbarWindow32")||eq(name,L"Button")))return true;
  }
- return false;
+ // Exact point only: a taskbar frame's bounds also cover its interactive
+ // XAML children. Never mistake a neighboring button for empty space.
+ return !mgtaskbar::allows(taskbarHover.empty,taskbarHover.root==root,taskbarHover.point.x,taskbarHover.point.y,point.x,point.y,GetTickCount()-taskbarHover.tick);
 }
 #ifdef _WIN32
-// Never query Explorer for icon geometry on the low-level mouse hook.
-// This documented shell API runs on the existing metadata worker.
-static RECT queryOwnTrayIcon(){
- struct IconId{DWORD size;HWND hwnd;UINT id;u8 guid[16];};
- using Fn=long(CB*)(const IconId*,RECT*);
- static auto get=(Fn)GetProcAddress(GetModuleHandleW(L"shell32.dll"),"Shell_NotifyIconGetRect");
- RECT r{};IconId id{sizeof(IconId),controllerwnd,1,{}};
- if(!get||!controllerwnd||get(&id,&r)<0)return RECT{};
- return r;
-}
+extern "C" int CB NativeTaskbarEmptyAt(int x,int y);
+extern "C" void CB NativeTaskbarProbeEnd();
 #endif
 // Fullscreen detection is opt-in and only runs when starting a candidate gesture.
 // Compare the hovered top-level window with its monitor, not the taskbar work area.
@@ -165,27 +167,48 @@ static void publishWarm(ProcessPath* paths,int& next){
 static DWORD CB metamain(void*){
  static ProcessPath paths[WARM_LIMIT]{};int next=0;MetadataPair previous{};H events[]={engineStop,metadataWake};DWORD lastWarm=0;bool warmed=false;
 #ifdef _WIN32
- RECT trayRect{};DWORD lastTrayRect=0;bool queriedTray=false;
+ TaskbarHover sampled{};bool hoveringTaskbar=false;
 #endif
  while(!shouldStop()){
 #ifdef _WIN32
   // Poll only while explicitly capturing diagnostics; independent of metadata rules.
   if(mgdiag::enabled()){POINT p{};GetCursorPos(&p);Target hovered=identity(WindowFromPoint(p));diagnosticState("sample hover child pid tid fg active focus capture",hovered);MG_LOG("sample engine running mouseExpected keyboardExpected pendingJobs hookOK",running,mouseExpected,keyboardExpected,pendingJobs,hookok);}
 #endif
-  if((rulesActive||mouseExpected)&&!metadataPending){POINT p{};GetCursorPos(&p);MetadataPair current{};
+  if((rulesActive||mouseExpected||taskbarProbeEnabled)&&!metadataPending){POINT p{};GetCursorPos(&p);MetadataPair current{};
 #ifdef _WIN32
-  DWORD tick=GetTickCount();if(mouseExpected&&(!queriedTray||tick-lastTrayRect>=750)){trayRect=queryOwnTrayIcon();lastTrayRect=tick;queriedTray=true;}current.trayIcon=trayRect;
+  HWND hit=WindowFromPoint(p);HWND root=taskbarProbeEnabled&&!trayMenuActive?taskbarRoot(hit):nullptr;
+  hoveringTaskbar=root!=nullptr;
+  DWORD tick=GetTickCount();
+  if(root){
+   if(sampled.root!=root||sampled.point.x!=p.x||sampled.point.y!=p.y||tick-sampled.tick>=mgtaskbar::refreshMs){
+    sampled={root,p,tick,NativeTaskbarEmptyAt(p.x,p.y)!=0};
+   }
+  }else sampled={};
+  current.taskbar=sampled;
+  current.cursor=metadataTarget(hit,paths,next);
+#else
+  current.cursor=metadataTarget(WindowFromPoint(p),paths,next);
 #endif
-  current.cursor=metadataTarget(WindowFromPoint(p),paths,next);auto fg=identity(GetForegroundWindow());current.foreground=fg.hwnd==current.cursor.hwnd&&fg.pid==current.cursor.pid?current.cursor:metadataTarget(fg.hwnd,paths,next);current.tick=GetTickCount();if(current.tick-previous.tick>=400||!sameTarget(current.cursor,previous.cursor)||!sameTarget(current.foreground,previous.foreground)){auto*d=(MetadataPair*)allocRaw(sizeof(MetadataPair));if(d){*d=current;if(!shouldStop()&&!InterlockedExchange(&metadataPending,1)){if(PostThreadMessageW(hooktid,MSG_METADATA,0,(LP)d))previous=current;else{InterlockedExchange(&metadataPending,0);freep(d);}}else freep(d);}}}
+  auto fg=identity(GetForegroundWindow());current.foreground=fg.hwnd==current.cursor.hwnd&&fg.pid==current.cursor.pid?current.cursor:metadataTarget(fg.hwnd,paths,next);current.tick=GetTickCount();if(current.tick-previous.tick>=400||current.taskbar.root!=previous.taskbar.root||current.taskbar.point.x!=previous.taskbar.point.x||current.taskbar.point.y!=previous.taskbar.point.y||current.taskbar.tick!=previous.taskbar.tick||current.taskbar.empty!=previous.taskbar.empty||!sameTarget(current.cursor,previous.cursor)||!sameTarget(current.foreground,previous.foreground)){auto*d=(MetadataPair*)allocRaw(sizeof(MetadataPair));if(d){*d=current;if(!shouldStop()&&!InterlockedExchange(&metadataPending,1)){if(PostThreadMessageW(hooktid,MSG_METADATA,0,(LP)d))previous=current;else{InterlockedExchange(&metadataPending,0);freep(d);}}else freep(d);}}}
 #ifdef _WIN32
   DWORD now=GetTickCount();if((rulesActive||mouseExpected)&&(!warmed||now-lastWarm>=1000)&&!warmPending){publishWarm(paths,next);lastWarm=now;warmed=true;}
 #endif
-  DWORD r=WaitForMultipleObjects(2,events,0,(rulesActive||mouseExpected
+  DWORD r=WaitForMultipleObjects(2,events,0,(rulesActive||mouseExpected||taskbarProbeEnabled
 #ifdef _WIN32
   ||mgdiag::enabled()
 #endif
-  )?100:0xffffffff);if(r==0||r==0xffffffff)break;
- }return 0;
+  )?
+#ifdef _WIN32
+  (hoveringTaskbar?mgtaskbar::hoverPollMs:100)
+#else
+  100
+#endif
+  :0xffffffff);if(r==0||r==0xffffffff)break;
+ }
+#ifdef _WIN32
+ NativeTaskbarProbeEnd();
+#endif
+ return 0;
 }
 // A short reserved click is replayed by the hook thread's message loop, not
 // inside WH_MOUSE_LL. No timer, sleep, matcher or action worker is involved.
@@ -198,7 +221,7 @@ static bool replay(int button){
 static void replayQueuedClick(WP button){if(button==2)click(2);}
 
 #include "gesture_match.hpp"
-struct Capture{Snapshot*s;Target t;int button,mods,n,used,moved,swallow,mask,deferred;DWORD started;bool expired;P p[maxDrawingPoints];};static Capture cap;static up captureTimer=0;static int blocked=0;static unsigned injectedBlocked=0;
+struct Capture{Snapshot*s;Target t;HWND taskbarStart;int button,mods,n,used,moved,swallow,mask,deferred;DWORD started;bool expired;P p[maxDrawingPoints];};static Capture cap;static up captureTimer=0;static int blocked=0;static unsigned injectedBlocked=0;
 static inline bool cantrigger(const Config&c,const Target&t,int b,int m,int trig){int pr=profile(c,t);for(int i=0;i<c.ng;i++)if(eligible(c,c.g[i],t,pr,b,m,trig)&&(trig||c.g[i].count))return true;return false;}
 static inline void finishJob(Job*j){release(j->s);freep(j);InterlockedExchangeAdd(&pendingJobs,-1);}
 static inline bool postjob(Job*j,bool fromHook=false){if(!j)return false;MG_LOG("queue job target child pid trigger samples deferred hook",(up)j,(up)j->t.hwnd,(up)j->t.child,j->t.pid,j->trigger,j->n,j->deferred,fromHook);if(InterlockedIncrement(&pendingJobs)>MAX_PENDING_JOBS||!running||!PostThreadMessageW(fromHook?hooktid:worktid,fromHook?MSG_RELAY_JOB:MSG_JOB,0,(LP)j)){MG_LOG("queue rejected job",(up)j);finishJob(j);return false;}return true;}
@@ -213,7 +236,7 @@ static inline void expireCapture(DWORD now){
  if(cap.moved&&cap.s->c.overlay)PostMessageW(controllerwnd,MSG_CLEAR,0,0);
  MG_LOG("drawn gesture timeout ms",now-cap.started);
 }
-static inline void resetcap(){stopCaptureTimer();cap.expired=false;bool clearTrail=cap.moved&&cap.s&&cap.s->c.overlay;if(cap.s)release(cap.s);cap.s=nullptr;cap.button=0;cap.n=0;cap.used=0;cap.moved=0;cap.swallow=0;if(running&&clearTrail)PostMessageW(controllerwnd,MSG_CLEAR,0,0);}
+static inline void resetcap(){stopCaptureTimer();cap.expired=false;bool clearTrail=cap.moved&&cap.s&&cap.s->c.overlay;if(cap.s)release(cap.s);cap.s=nullptr;cap.taskbarStart=nullptr;cap.button=0;cap.n=0;cap.used=0;cap.moved=0;cap.swallow=0;if(running&&clearTrail)PostMessageW(controllerwnd,MSG_CLEAR,0,0);}
 static inline int mb(UINT msg,DWORD data){switch(msg){case 0x201:case 0x202:return 1;case 0x204:case 0x205:return 2;case 0x207:case 0x208:return 3;case 0x20b:case 0x20c:return HI(data)==1?4:5;}return 0;}
 static inline bool isdown(UINT m){return m==0x201||m==0x204||m==0x207||m==0x20b;}
 static inline bool isup(UINT m){return m==0x202||m==0x205||m==0x208||m==0x20c;}
@@ -232,7 +255,7 @@ static int captureMask(const Snapshot& snap,const Target&t,bool deferred,int b,i
 static bool submitAtPointer(int trig,POINT point){
  if(!(cap.s->buttons[cap.button][cap.mods]&(1<<trig)))return false;
  HWND h=gestureWindowAt(point);Target t{};bool deferred=false;const auto& c=cap.s->c;MG_LOG("submit rehit trigger original hit",trig,(up)cap.t.hwnd,(up)h);
- if(shellTrayClick(h,c.taskbarGestures,point)||(c.disableFullscreenGestures&&fullscreenTarget(h))||!targetForHook(h,t,deferred,cap.s)||(!deferred&&cap.s->rules&&excluded(c,t,1)))return false;
+ if(shellTrayClick(h,c.taskbarGestures,point,trig==0?cap.taskbarStart:nullptr)||(c.disableFullscreenGestures&&fullscreenTarget(h))||!targetForHook(h,t,deferred,cap.s)||(!deferred&&cap.s->rules&&excluded(c,t,1)))return false;
  if(trig==0&&cap.button==1&&t.pid==ownPid&&isOwnEditorFrame(t.hwnd)){W cls[64]{};if(GetClassNameW(h,cls,64)&&eq(cls,L"miniGesturesCanvas"))return false;}
  if(!(captureMask(*cap.s,t,deferred,cap.button,cap.mods)&(1<<trig))||!clickTargetSafe(t))return false;
  t.x=point.x;t.y=point.y;t.hasPoint=1;return submit(trig,&t,deferred);
@@ -257,9 +280,9 @@ static LR CB hookproc(int n,WP msg,LP lp){
   // Reserve both edges only when the target is eligible and safe to replay.
   HWND nativeHit=WindowFromPoint(m.pt);if(shellTrayClick(nativeHit,live->c.taskbarGestures,m.pt))return pass();
   HWND hovered=gestureWindowAtHit(m.pt,nativeHit);Target t{};bool deferred=false;
-  if(shellTrayClick(hovered,live->c.taskbarGestures,m.pt)||(live->c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&live->rules&&excluded(live->c,t,1))){MG_LOG("capture skipped target filter hovered target pid",(up)hovered,(up)t.hwnd,t.pid);return pass();}
+  if((hovered!=nativeHit&&shellTrayClick(hovered,live->c.taskbarGestures,m.pt))||(live->c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&live->rules&&excluded(live->c,t,1))){MG_LOG("capture skipped target filter hovered target pid",(up)hovered,(up)t.hwnd,t.pid);return pass();}
   if(b==1&&t.pid==ownPid&&isOwnEditorFrame(t.hwnd)){W cls[64]{};if(GetClassNameW(hovered,cls,64)&&eq(cls,L"miniGesturesCanvas"))return pass();}mask=captureMask(*live,t,deferred,b,mod);if(!mask||!clickTargetSafe(t)){MG_LOG("capture skipped mask or safety target pid mask",(up)t.hwnd,t.pid,mask);return pass();}
-  cap.mask=mask;cap.deferred=deferred;lastTrailTick=0;cap.s=live;retain(cap.s);t.x=m.pt.x;t.y=m.pt.y;t.hasPoint=1;cap.t=t;cap.button=b;cap.mods=mod;cap.n=1;cap.p[0]={m.pt.x,m.pt.y};cap.used=cap.moved=0;cap.expired=false;cap.started=m.time;if((mask&1)&&cap.s->c.gestureTimeoutMs>0)captureTimer=SetTimer(nullptr,0,(UINT)cap.s->c.gestureTimeoutMs,nullptr);// A rocker-right-only left press stays native: no click replay or drag interference.
+  cap.taskbarStart=taskbarRoot(hovered);cap.mask=mask;cap.deferred=deferred;lastTrailTick=0;cap.s=live;retain(cap.s);t.x=m.pt.x;t.y=m.pt.y;t.hasPoint=1;cap.t=t;cap.button=b;cap.mods=mod;cap.n=1;cap.p[0]={m.pt.x,m.pt.y};cap.used=cap.moved=0;cap.expired=false;cap.started=m.time;if((mask&1)&&cap.s->c.gestureTimeoutMs>0)captureTimer=SetTimer(nullptr,0,(UINT)cap.s->c.gestureTimeoutMs,nullptr);// A rocker-right-only left press stays native: no click replay or drag interference.
   cap.swallow=!(b==1&&mask==(1<<6));MG_LOG("capture begin target child pid button mods mask swallow deferred",(up)t.hwnd,(up)t.child,t.pid,b,mod,mask,cap.swallow,deferred);return cap.swallow?1:pass();
  }
  if(!cap.button)return pass();if(b==cap.button&&isdown((UINT)msg))return cap.swallow?1:pass();const auto&c=cap.s->c;expireCapture(m.time);
@@ -308,7 +331,7 @@ static LR CB keyboardproc(int n,WP msg,LP lp){if(n<0)return CallNextHookEx(keyho
  }
  // Pass both edges to Windows before recording, target lookup or dispatch.
  if(screenshotKeys.pass(vk,down,up,vk=='S'?mods():0)){heldkeys[vk]=0;return CallNextHookEx(keyhook,n,msg,lp);}
- if(up&&heldkeys[vk]){int kind=heldkeys[vk];heldkeys[vk]=0;if(kind==2&&actionRecordCandidate==vk){actionRecordCandidate=0;DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(recording==2&&pid==GetCurrentProcessId())PostMessageW(controllerwnd,MSG_RECORD,vk,0);}if(!recording&&live&&(!live->c.enabled||!live->keyWanted))PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);return 1;}if(!down||!live||!running||shapeRecording||trayMenuActive)return CallNextHookEx(keyhook,n,msg,lp);if(heldkeys[vk])return 1;bool keyPossible=false;for(int i=0;i<16;i++)if(live->keys[vk][i]){keyPossible=true;break;}if(!recording&&!keyPossible)return CallNextHookEx(keyhook,n,msg,lp);int m=mods();if(recording){DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(pid==GetCurrentProcessId()&&recording==2){int bit=recordModifierMask(vk),held=capturedModifiers();if(bit){actionRecordCandidate=(held||m)?0:vk;heldkeys[vk]=2;return 1;}actionRecordCandidate=0;heldkeys[vk]=1;PostMessageW(controllerwnd,MSG_RECORD,vk,m|held);return 1;}if(pid==GetCurrentProcessId()&&vk!=0x10&&vk!=0x11&&vk!=0x12&&vk!=0x5b&&vk!=0x5c&&!(vk>=0xa0&&vk<=0xa5)){heldkeys[vk]=1;PostMessageW(controllerwnd,MSG_RECORD,vk,m);return 1;}}if(!running||!live->c.enabled)return CallNextHookEx(keyhook,n,msg,lp);const auto&c=live->c;if(!live->keys[vk][m])return CallNextHookEx(keyhook,n,msg,lp);POINT cursor{};if(!GetCursorPos(&cursor))return CallNextHookEx(keyhook,n,msg,lp);Target t{};bool deferred=false;HWND hovered=gestureWindowAt(cursor);if((c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&excluded(c,t,2)))return CallNextHookEx(keyhook,n,msg,lp);int pr=profile(c,t);bool found=false;BindingRange range(*live,0,m,vk);for(int i=range.first;range.valid(i);i=range.advance(i)){auto&g=c.g[i];if(g.enabled&&g.hotkey==vk&&g.hotmods==m&&(deferred||scopeEligible(c,g,pr))){found=true;break;}}if(!found)return CallNextHookEx(keyhook,n,msg,lp);auto*j=allocateJob();if(!j)return CallNextHookEx(keyhook,n,msg,lp);j->s=live;retain(j->s);t.x=cursor.x;t.y=cursor.y;t.hasPoint=1;j->t=t;j->hotkey=vk;j->mods=m;j->deferred=deferred;if(postjob(j,true)){heldkeys[vk]=1;return 1;}return CallNextHookEx(keyhook,n,msg,lp);}
+ if(up&&heldkeys[vk]){int kind=heldkeys[vk];heldkeys[vk]=0;if(kind==2&&actionRecordCandidate==vk){actionRecordCandidate=0;DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(recording==2&&pid==GetCurrentProcessId())PostMessageW(controllerwnd,MSG_RECORD,vk,0);}if(!recording&&live&&(!live->c.enabled||!live->keyWanted))PostThreadMessageW(hooktid,MSG_REFRESH_HOOKS,0,0);return 1;}if(!down||!live||!running||shapeRecording||trayMenuActive)return CallNextHookEx(keyhook,n,msg,lp);if(heldkeys[vk])return 1;bool keyPossible=false;for(int i=0;i<16;i++)if(live->keys[vk][i]){keyPossible=true;break;}if(!recording&&!keyPossible)return CallNextHookEx(keyhook,n,msg,lp);int m=mods();if(recording){DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);if(pid==GetCurrentProcessId()&&recording==2){int bit=recordModifierMask(vk),held=capturedModifiers();if(bit){actionRecordCandidate=(held||m)?0:vk;heldkeys[vk]=2;return 1;}actionRecordCandidate=0;heldkeys[vk]=1;PostMessageW(controllerwnd,MSG_RECORD,vk,m|held);return 1;}if(pid==GetCurrentProcessId()&&vk!=0x10&&vk!=0x11&&vk!=0x12&&vk!=0x5b&&vk!=0x5c&&!(vk>=0xa0&&vk<=0xa5)){heldkeys[vk]=1;PostMessageW(controllerwnd,MSG_RECORD,vk,m);return 1;}}if(!running||!live->c.enabled)return CallNextHookEx(keyhook,n,msg,lp);const auto&c=live->c;if(!live->keys[vk][m])return CallNextHookEx(keyhook,n,msg,lp);POINT cursor{};if(!GetCursorPos(&cursor))return CallNextHookEx(keyhook,n,msg,lp);Target t{};bool deferred=false;HWND hovered=gestureWindowAt(cursor);if(shellTrayClick(hovered,c.taskbarGestures,cursor)||(c.disableFullscreenGestures&&fullscreenTarget(hovered))||!targetForHook(hovered,t,deferred)||(!deferred&&excluded(c,t,2)))return CallNextHookEx(keyhook,n,msg,lp);int pr=profile(c,t);bool found=false;BindingRange range(*live,0,m,vk);for(int i=range.first;range.valid(i);i=range.advance(i)){auto&g=c.g[i];if(g.enabled&&g.hotkey==vk&&g.hotmods==m&&(deferred||scopeEligible(c,g,pr))){found=true;break;}}if(!found)return CallNextHookEx(keyhook,n,msg,lp);auto*j=allocateJob();if(!j)return CallNextHookEx(keyhook,n,msg,lp);j->s=live;retain(j->s);t.x=cursor.x;t.y=cursor.y;t.hasPoint=1;j->t=t;j->hotkey=vk;j->mods=m;j->deferred=deferred;if(postjob(j,true)){heldkeys[vk]=1;return 1;}return CallNextHookEx(keyhook,n,msg,lp);}
 static Snapshot* initialSnapshot;
 static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||shouldStop())return;bool wantMouse=live->c.enabled&&live->mouseWanted,wantKey=(live->c.enabled&&live->keyWanted)||recording;
  // Keep the screenshot compatibility hook available even when gestures are
@@ -324,7 +347,7 @@ static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||s
   diagkeyhook=SetWindowsHookExW(13,diagnosticKeyboardProc,GetModuleHandleW(nullptr),0);
   MG_LOG("diagnostic keyboard observer installed",diagkeyhook!=nullptr);
  }
- InterlockedExchange(&mouseExpected,ok&&wantMouse?1:0);InterlockedExchange(&keyboardExpected,ok&&wantKey?1:0);InterlockedExchange(&hookok,ok?1:0);InterlockedExchange(&rulesActive,ok&&live->rules&&(wantMouse||wantKey)?1:0);if(metadataWake)SetEvent(metadataWake);
+ InterlockedExchange(&taskbarProbeEnabled,ok&&(wantMouse||wantKey)&&live->c.taskbarGestures?1:0);InterlockedExchange(&mouseExpected,ok&&wantMouse?1:0);InterlockedExchange(&keyboardExpected,ok&&wantKey?1:0);InterlockedExchange(&hookok,ok?1:0);InterlockedExchange(&rulesActive,ok&&live->rules&&(wantMouse||wantKey)?1:0);if(metadataWake)SetEvent(metadataWake);
 }
 static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId();configureHooks();SetEvent(hookready);PostMessageW(controllerwnd,MSG_ENGINE_READY,0,0);
  while(waitMessage(m)){if(m.message==MSG_CONFIG){Snapshot* next=(Snapshot*)m.lParam;Snapshot* old=live;live=next;release(old);long was=hookok;configureHooks();if(was!=hookok)PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}
@@ -333,9 +356,9 @@ static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=init
  else if(m.message==MSG_RELAY_JOB){relayJob((Job*)m.lParam);}
  else if(m.message==MSG_REFRESH_HOOKS){configureHooks();}else if(m.message==MSG_REARM){if(!cap.button&&!blocked&&mousehook){UnhookWindowsHookEx(mousehook);mousehook=nullptr;configureHooks();(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}}
  else if(m.message==MSG_WARM_METADATA){acceptWarmMetadata((WarmMetadata*)m.lParam);}
- else if(m.message==MSG_METADATA){auto*d=(MetadataPair*)m.lParam;cacheTarget(d->cursor,d->tick);cacheTarget(d->foreground,d->tick);ownTrayIcon=d->trayIcon;ownTrayTick=d->tick;freep(d);InterlockedExchange(&metadataPending,0);}
+ else if(m.message==MSG_METADATA){auto*d=(MetadataPair*)m.lParam;cacheTarget(d->cursor,d->tick);cacheTarget(d->foreground,d->tick);taskbarHover=d->taskbar;freep(d);InterlockedExchange(&metadataPending,0);}
  else{TranslateMessage(&m);DispatchMessageW(&m);}}
- if(mousehook)UnhookWindowsHookEx(mousehook);if(keyhook)UnhookWindowsHookEx(keyhook);if(diagkeyhook)UnhookWindowsHookEx(diagkeyhook);diagkeyhook=nullptr;InterlockedExchange(&hookok,0);InterlockedExchange(&rulesActive,0);resetcap();release(live);live=nullptr;if(running){InterlockedExchange(&mouseExpected,0);InterlockedExchange(&keyboardExpected,0);(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}while(PeekMessageW(&m,nullptr,0,0,1)){if(m.message==MSG_CONFIG)release((Snapshot*)m.lParam);else if(m.message==MSG_METADATA||m.message==MSG_WARM_METADATA)freep((void*)m.lParam);else if(m.message==MSG_REPLAY_CLICK)replayQueuedClick(m.wParam);else if(m.message==MSG_RELAY_JOB)finishJob((Job*)m.lParam);}return 0;}
+ if(mousehook)UnhookWindowsHookEx(mousehook);if(keyhook)UnhookWindowsHookEx(keyhook);if(diagkeyhook)UnhookWindowsHookEx(diagkeyhook);diagkeyhook=nullptr;InterlockedExchange(&hookok,0);InterlockedExchange(&rulesActive,0);InterlockedExchange(&taskbarProbeEnabled,0);resetcap();release(live);live=nullptr;if(running){InterlockedExchange(&mouseExpected,0);InterlockedExchange(&keyboardExpected,0);(void)0;PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}while(PeekMessageW(&m,nullptr,0,0,1)){if(m.message==MSG_CONFIG)release((Snapshot*)m.lParam);else if(m.message==MSG_METADATA||m.message==MSG_WARM_METADATA)freep((void*)m.lParam);else if(m.message==MSG_REPLAY_CLICK)replayQueuedClick(m.wParam);else if(m.message==MSG_RELAY_JOB)finishJob((Job*)m.lParam);}return 0;}
 struct Result{int ok,score,conflictId,otherId;W name[196];Result* next;};
 static void resultGestureName(W* out,int cap,const RuntimeConfig&c,const Gesture&g){
  out[0]=0;if(g.profile)for(int i=0;i<c.na;i++)if(c.a[i].id==g.profile){if(*c.a[i].name){cp(out,c.a[i].name,cap);cat(out,L" - ",cap);}break;}cat(out,g.name,cap);
