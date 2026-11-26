@@ -4,7 +4,7 @@ enum ES {SHAPES_LABEL,ADD_SHAPE,REMOVE_SHAPE,DRAW_SHAPE,DRAW_HELP,RESET_DRAW,CAN
 static const W* editorStrings[][6]={
 X("Shapes","Formas","Formas","Formes","Formen","Forme"),
 X("Add shape","Adicionar forma","Añadir forma","Ajouter une forme","Form hinzufügen","Aggiungi forma"),
-X("Remove shape","Remover forma","Eliminar forma","Supprimer la forme","Form löschen","Rimuovi forma"),
+X("Remove shapes","Remover formas","Eliminar formas","Supprimer les formes","Formen löschen","Rimuovi forme"),
 X("Draw a shape","Desenhar uma forma","Dibujar una forma","Dessiner une forme","Form zeichnen","Disegna una forma"),
 X("Hold the left or right mouse button and draw. Release to finish.","Mantenha o botão esquerdo ou direito premido e desenhe. Largue para terminar.","Mantén pulsado el botón izquierdo o derecho y dibuja. Suelta para terminar.","Maintenez le bouton gauche ou droit et dessinez. Relâchez pour terminer.","Linke oder rechte Maustaste halten und zeichnen. Zum Beenden loslassen.","Tieni premuto il pulsante sinistro o destro e disegna. Rilascia per finire."),
 X("Clear drawing","Limpar desenho","Borrar dibujo","Effacer le dessin","Zeichnung löschen","Cancella disegno"),

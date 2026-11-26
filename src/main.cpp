@@ -6,7 +6,7 @@
 #include "templates.hpp"
 #include "window_tray.hpp"
 #include "trail_raster.hpp"
-static Config cfg;static Gesture edit;static int selectedShape=0;static Rule rule;static int page=0,appId=0,selected=-1,ruleIndex=-1,actIndex=0,ruleEdit=0,settings=0,record=0;static int hkregistered[256][16];static HWND controls[164],canvas;static int dpi=96;static HFONT font,tabBold;static HBRUSH white,side,blue;static HINSTANCE inst;static HICON appicon,pausedIcon,updateIcon,pausedUpdateIcon;static bool updateAvailable=false;static bool geometryReady=false,trayDoubleRelease=false,trayAdded=false;static HICON trayCurrentIcon=nullptr;static NID nid;static UINT taskbarmsg;static bool loading=false,dirty=false,exiting=false,configValid=true;static P drawn[maxDrawingPoints];static int drawnN=0,drawdrag=0;static P trail[maxDrawingPoints];static int trailN=0;static Target testTarget;static W last[256];static int actionVk=0,actionMods=0;static PROC recordOld;static bool lazyUI=false,noHooks=false,geometryDirty=false,firstSave=false,testFailed=false,shutdownTestMode=false,busyTestMode=false,parallelTestMode=false;static DWORD testStart;static H shutdownSignal,startupReady,watchdogThread;static DWORD startupDeadline;static int editLineHeight,editTextHeight;
+static Config cfg;static Gesture edit;static int selectedShape=0,shapeAnchor=0;static unsigned shapeSelection=0;static Rule rule;static int page=0,appId=0,selected=-1,ruleIndex=-1,actIndex=0,ruleEdit=0,settings=0,record=0;static int hkregistered[256][16];static HWND controls[164],canvas;static int dpi=96;static HFONT font,tabBold;static HBRUSH white,side,blue;static HINSTANCE inst;static HICON appicon,pausedIcon,updateIcon,pausedUpdateIcon;static bool updateAvailable=false;static bool geometryReady=false,trayDoubleRelease=false,trayAdded=false;static HICON trayCurrentIcon=nullptr;static NID nid;static UINT taskbarmsg;static bool loading=false,dirty=false,exiting=false,configValid=true;static P drawn[maxDrawingPoints];static int drawnN=0,drawdrag=0;static P trail[maxDrawingPoints];static int trailN=0;static Target testTarget;static W last[256];static int actionVk=0,actionMods=0;static PROC recordOld;static bool lazyUI=false,noHooks=false,geometryDirty=false,firstSave=false,testFailed=false,shutdownTestMode=false,busyTestMode=false,parallelTestMode=false;static DWORD testStart;static H shutdownSignal,startupReady,watchdogThread;static DWORD startupDeadline;static int editLineHeight,editTextHeight;
 static const W* tr(int id){return strings[id][cfg.lang];}
 enum C{TAB0=10,TAB1,TAB2,SETBTN,TOGGLE,IMPORTBTN,EXPORTBTN,SEARCHBOX,LIST,NEWBTN,CATBTN,DELBTN,DUPBTN,APPGEST,NAMEBOX,FOLDERBOX,ENABLEBOX,BUTTONBOX,MODBOX,TRIGGERBOX,KEYBOX,RECBTN,KEYCLEAR,SENSEBOX,TRAIN,ADDSAMPLE,RESETTRAIN,ACTLIST,ACTCOMBO,ARGBOX,ACTADD,ACTDEL,ACTUP,ACTDOWN,ACTREC,TESTBTN,SAVEBTN,EXEBOX,CLASSBOX,TITLEBOX,PRIORITYBOX,INHERITBOX,MODEBOX,BROWSEBTN,LANGBOX,THRESHBOX,OVERBOX,CLOSEBOX,STARTBOX,UNUSED_CONTROL,STATUSBOX,HEAD,LABSEARCH,LABNAME,LABFOLDER,LABBUTTON,LABMOD,LABTRIGGER,LABKEY,LABSENSE,LABTRAIN,LABACTION,LABPARAM,LABEXE,LABCLASS,LABTITLE,LABPRIORITY,LABMODE,LABLANG,LABTHRESH,LABSELECT,ACTHINT,APPBACK,PRESETBTN,PICKBTN,EXECBOX,LABEXEC,LABSENSHELP,CONFIRMBOX,VERSIONBOX,STARTWINBOX,ADMINBOX,ADMINHELP,ADMINSTATUS,ADDITIONALHEADER,THEMEBOX,LABTHEME,TOPBOX, APPLIST=105,APPNEW,APPCAT,APPEDIT,APPDEL,APPHEAD,GESTHEAD,EDITORHEAD,APPSEARCH,TRAILCOLOR,TRAILWIDTH,LABTRAILCOLOR,LABTRAILWIDTH,TRAILPICK,TASKBARBOX,TRAILRESET,EXPATHBOX,LABEXPATH,CANCELCREATE=148,SELECTOR_ENABLED=150,SELECTOR_INHERIT=151,FULLSCREENBOX=152,INDICATORBOX=153,CAPTUREBTN=154,UPDATEBOX=155,LABUPDATE=156,UPDATEBTN=157,UPDATEVERSIONS=158,INDICATORSECONDS=159,LABINDICATORSECONDS=149,LABGESTURETIMEOUT=160,GESTURETIMEOUT=161};
 static HWND ctrl(int id){return controls[id];}static int px(int x){return x*dpi/96;}static void txt(int id,const W*s){if(ctrl(id))SetWindowTextW(ctrl(id),s);}static void get(int id,W*b,int cap){GetWindowTextW(ctrl(id),b,cap);}static int selection(int id){return (int)SendMessageW(ctrl(id),0x147,0,0);}static void select(int id,int n){SendMessageW(ctrl(id),0x14e,n,0);}static int ls(int id){return (int)SendMessageW(ctrl(id),0x188,0,0);}static void sl(int id,int n){SendMessageW(ctrl(id),0x186,n,0);}static int checked(int id){return (int)SendMessageW(ctrl(id),0xf0,0,0)==1;}static void check(int id,int on){SendMessageW(ctrl(id),0xf1,on?1:0,0);}static void combo(int id,const W*s){SendMessageW(ctrl(id),0x143,0,(LP)s);}static void listadd(int id,const W*s,int data){int x=(int)SendMessageW(ctrl(id),0x180,0,(LP)s);if(x>=0)SendMessageW(ctrl(id),0x19a,x,data);}static int listdata(int id){int n=ls(id);return n<0?-1:(int)SendMessageW(ctrl(id),0x199,n,0);}static void listreset(int id){SendMessageW(ctrl(id),0x184,0,0);}static void comboclear(int id){SendMessageW(ctrl(id),0x14b,0,0);}static void inttext(int id,int n){W b[24];number(b,n);txt(id,b);}static int getnum(int id){W b[24];get(id,b,24);return num(b);}
@@ -33,7 +33,7 @@ static int modalCreateButton=0;static bool dialogOwnerLimited=false;static bool 
 static int appCategory=-1;static int categorySelection=-1;static HWND popup=nullptr,drawCanvas=nullptr;static HWND settingsWnd=nullptr;static HWND settingsControls[164]{};static bool settingsLoading=false;static void openSettingsView();static void closeSettingsView();static void updateSettingsTheme();
 static void updateTrayIcon();
 static void indicatorThemeChanged();
-static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.3";
+static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.4";
 static void failedGestureLabel(W* b,int cap,const W* name,int score){
  static const W* const failed[]={L"Gesture recognition failed",L"Falha no reconhecimento do gesto",L"Error de reconocimiento del gesto",L"Échec de la reconnaissance du geste",L"Gestenerkennung fehlgeschlagen",L"Riconoscimento del gesto non riuscito"};
  static const W* const similar[]={L" — Similar to ",L" — Semelhante a ",L" — Similar a ",L" — Similaire à ",L" — Ähnlich wie ",L" — Simile a "};
@@ -242,9 +242,26 @@ static void actionfields(){loading=true;listreset(ACTLIST);for(int i=0;i<edit.st
 static void saveactionfields(){if(actIndex>=0&&actIndex<edit.steps&&edit.actions[actIndex].type!=0){get(ARGBOX,edit.actions[actIndex].arg,256);}}
 static void refreshShapeCards(){
  selectedShape=clamp(selectedShape,0,maxn(0,edit.count-1));
+ shapeAnchor=clamp(shapeAnchor,0,maxn(0,edit.count-1));
+ shapeSelection&=mgcards::all(edit.count);
  if(canvas)InvalidateRect(canvas,nullptr,0);
 }
-static void editfields(){loading=true;drawnN=0;if(gstview()){selectedShape=0;refreshShapeCards();txt(NAMEBOX,edit.name);check(ENABLEBOX,edit.enabled);select(BUTTONBOX,edit.trigger==6?1:edit.button);EnableWindow(ctrl(BUTTONBOX),edit.trigger!=6);select(MODBOX,edit.mods);select(TRIGGERBOX,edit.trigger);W b[128];keyname(edit.hotkey,edit.hotmods,b,128);txt(KEYBOX,b);select(EXECBOX,edit.parallel);actIndex=0;actionfields();InvalidateRect(canvas,nullptr,0);}else{txt(NAMEBOX,rule.name);check(ENABLEBOX,rule.enabled);txt(EXEBOX,rule.exe);txt(EXPATHBOX,rule.path);txt(CLASSBOX,rule.cls);txt(TITLEBOX,rule.title);check(INHERITBOX,rule.inherit);select(MODEBOX,rule.mode);}loading=false;}
+static void selectSingleShape(int index){
+ selectedShape=shapeAnchor=clamp(index,0,maxn(0,edit.count-1));
+ shapeSelection=edit.count?mgcards::bit(selectedShape):0;
+ refreshShapeCards();
+}
+static void removeSelectedShapes(){
+ if(!shapeSelection||!edit.count)return;
+ int keep=0,firstRemoved=edit.count;
+ for(int i=0;i<edit.count;i++){
+  if(shapeSelection&mgcards::bit(i)){firstRemoved=minn(firstRemoved,i);continue;}
+  if(keep!=i)memcpy(edit.samples[keep],edit.samples[i],sizeof(edit.samples[0]));
+  ++keep;
+ }
+ edit.count=keep;selectSingleShape(firstRemoved);
+}
+static void editfields(){loading=true;drawnN=0;if(gstview()){selectSingleShape(0);txt(NAMEBOX,edit.name);check(ENABLEBOX,edit.enabled);select(BUTTONBOX,edit.trigger==6?1:edit.button);EnableWindow(ctrl(BUTTONBOX),edit.trigger!=6);select(MODBOX,edit.mods);select(TRIGGERBOX,edit.trigger);W b[128];keyname(edit.hotkey,edit.hotmods,b,128);txt(KEYBOX,b);select(EXECBOX,edit.parallel);actIndex=0;actionfields();InvalidateRect(canvas,nullptr,0);}else{txt(NAMEBOX,rule.name);check(ENABLEBOX,rule.enabled);txt(EXEBOX,rule.exe);txt(EXPATHBOX,rule.path);txt(CLASSBOX,rule.cls);txt(TITLEBOX,rule.title);check(INHERITBOX,rule.inherit);select(MODEBOX,rule.mode);}loading=false;}
 static void refresh(){applyTheme();labels();rebuildlist();if(!settings&&page==2&&listdata(LIST)==-1){ruleIndex=-1;categorySelection=-1;}editfields();relayout();refreshSearchCue();for(int id=TAB0;id<=TAB2;id++)InvalidateRect(ctrl(id),nullptr,0);InvalidateRect(ctrl(SETBTN),nullptr,0);status(L"");}
 static void hotkeys(){/* Keyboard hook resolves application/exclusion context before consuming a shortcut. */}
 static bool persist(){if(!saveconfig(cfg,configpath)){MessageBoxW(mainwnd,tr(STATUS_ERROR),L"miniGestures",0x10);return false;}configValid=true;geometryDirty=false;firstSave=false;publish(cfg);hotkeys();status(tr(STATUS_SAVED));return true;}
@@ -315,15 +332,54 @@ static void shapeArrow(HDC dc,RECT area,const POINT* p,int n,int thickness,DWORD
 static mgcards::Grid shapeCardGrid(const RECT& r){
  return mgcards::fit(r.right-r.left,r.bottom-r.top,clamp(edit.count,0,MAXS),maxn(1,px(3)),maxn(1,px(4)),px(82),px(72));
 }
+// Selection gestures belong only to the main editor, never the freehand canvas.
+static struct ShapeDrag {bool active,marquee,ctrl,shift;int x,y,hit,oldFocus,oldAnchor;unsigned base;mgcards::Rect rect;} shapeDrag{};
+static void updateShapeDrag(HWND h,int x,int y){
+ if(!shapeDrag.marquee&&maxn(absn(x-shapeDrag.x),absn(y-shapeDrag.y))<maxn(2,px(4)))return;
+ shapeDrag.marquee=true;
+ RECT r{};GetClientRect(h,&r);
+ shapeDrag.rect=mgcards::box(shapeDrag.x,shapeDrag.y,x,y);
+ // Clamp the visible rectangle to the panel; intersection uses identical card geometry.
+ auto& q=shapeDrag.rect;q.left=clamp(q.left,0,r.right);q.right=clamp(q.right,0,r.right);q.top=clamp(q.top,0,r.bottom);q.bottom=clamp(q.bottom,0,r.bottom);
+ auto hits=mgcards::intersecting(shapeCardGrid(r),q);
+ shapeSelection=mgcards::marquee(shapeDrag.base,hits,shapeDrag.ctrl,shapeDrag.shift)&mgcards::all(edit.count);
+ InvalidateRect(h,nullptr,0);
+}
 static LR CB canvasproc(HWND h,UINT m,WP w,LP l){
  bool drawing=h==drawCanvas;
  if(h==canvas&&!drawing){
-  if(m==0x201){RECT r{};GetClientRect(h,&r);int hit=shapeCardGrid(r).hit((short)LO(l),(short)HI(l));if(hit>=0){selectedShape=hit;SetFocus(h);InvalidateRect(h,nullptr,0);}return 0;}
+  if(m==0x201){
+   if(shapeDrag.active)return 0;
+   RECT r{};GetClientRect(h,&r);int x=(short)LO(l),y=(short)HI(l),hit=shapeCardGrid(r).hit(x,y);
+   SetFocus(h);
+   shapeDrag={true,false,(w&8)!=0,(w&4)!=0,x,y,hit,selectedShape,shapeAnchor,shapeSelection,{}};
+   SetCapture(h);return 0;
+  }
+  if(m==0x200&&shapeDrag.active){updateShapeDrag(h,(short)LO(l),(short)HI(l));return 0;}
+  if(m==0x202&&shapeDrag.active){
+   updateShapeDrag(h,(short)LO(l),(short)HI(l));
+   if(!shapeDrag.marquee){
+    int hit=shapeDrag.hit;
+    shapeSelection=mgcards::click(shapeDrag.base,shapeAnchor,hit,shapeDrag.ctrl,shapeDrag.shift)&mgcards::all(edit.count);
+    if(hit>=0){selectedShape=hit;if(!shapeDrag.shift)shapeAnchor=hit;}
+   }else if(shapeSelection){
+    // Prefer the first selected card as the anchor for a subsequent Shift range.
+    for(int i=0;i<edit.count;i++)if(shapeSelection&mgcards::bit(i)){selectedShape=shapeAnchor=i;break;}
+   }
+   shapeDrag.active=false;ReleaseCapture();refreshShapeCards();return 0;
+  }
+  if((m==0x215||m==0x1f)&&shapeDrag.active){
+   shapeSelection=shapeDrag.base;selectedShape=shapeDrag.oldFocus;shapeAnchor=shapeDrag.oldAnchor;
+   shapeDrag.active=false;if(m==0x1f)ReleaseCapture();refreshShapeCards();return 0;
+  }
   if(m==0x87)return 1; // DLGC_WANTARROWS; Tab navigation remains native.
   if(m==0x100&&edit.count>0){
    RECT r{};GetClientRect(h,&r);auto grid=shapeCardGrid(r);int next=selectedShape;
    switch(w){case 0x25:--next;break;case 0x27:++next;break;case 0x26:next-=grid.columns;break;case 0x28:next+=grid.columns;break;case 0x24:next=0;break;case 0x23:next=edit.count-1;break;default:return DefWindowProcW(h,m,w,l);}
-   selectedShape=clamp(next,0,edit.count-1);InvalidateRect(h,nullptr,0);return 0;
+   next=clamp(next,0,edit.count-1);
+   if(GetAsyncKeyState(0x10)&0x8000){selectedShape=next;shapeSelection=mgcards::range(shapeAnchor,next)&mgcards::all(edit.count);refreshShapeCards();}
+   else selectSingleShape(next);
+   return 0;
   }
  }
  if(drawing&&(m==0x201||m==0x204)){if(drawdrag)return 0;drawnN=1;drawn[0]={(short)LO(l),(short)HI(l)};drawdrag=m==0x201?1:2;SetCapture(h);InvalidateRect(h,nullptr,0);return 0;}
@@ -338,7 +394,7 @@ static LR CB canvasproc(HWND h,UINT m,WP w,LP l){
    auto grid=shapeCardGrid(r);
    for(int i=0;i<grid.count;i++){
     auto cell=grid.card(i);RECT q{cell.left,cell.top,cell.right,cell.bottom};
-    bool chosen=i==selectedShape;
+    bool chosen=(shapeSelection&mgcards::bit(i))!=0;
     DWORD bg=chosen?rowSelectionFill(highContrastTheme):fieldFill;
     DWORD fg=chosen&&highContrastTheme?accentText:accent;
     rounded(b,q,maxn(1,px(4)),bg,chosen?accent:frame,true,fieldFill);
@@ -353,6 +409,15 @@ static LR CB canvasproc(HWND h,UINT m,WP w,LP l){
    }
   }
   else textFlat(b,et(NO_SHAPES),r,muted,1|4|0x20);
+  if(!drawing&&h==canvas&&shapeDrag.active&&shapeDrag.marquee){
+   const auto q=shapeDrag.rect;int t=maxn(1,px(1));
+   if(q.right>q.left&&q.bottom>q.top){
+    fillSolid(b,{q.left,q.top,q.right,minn(q.bottom,q.top+t)},accent);
+    fillSolid(b,{q.left,maxn(q.top,q.bottom-t),q.right,q.bottom},accent);
+    fillSolid(b,{q.left,q.top,minn(q.right,q.left+t),q.bottom},accent);
+    fillSolid(b,{maxn(q.left,q.right-t),q.top,q.right,q.bottom},accent);
+   }
+  }
   BitBlt(dc,0,0,r.right,r.bottom,b,0,0,0xcc0020);SelectObject(b,old);DeleteObject(bm);DeleteDC(b);EndPaint(h,&p);return 0;
  }return DefWindowProcW(h,m,w,l);
 }
@@ -399,7 +464,7 @@ static bool drawGestureShape(P*out){
  if(MessageBoxW(mainwnd,msg,L"miniGestures",0x24)==6)memcpy(out,canonical,sizeof(canonical));return true;
 }
 // Shapes belong to the gesture, even if other gestures have similar strokes.
-static void appendEditorShape(const P*points){if(edit.count>=MAXS){specificError(SHAPE_LIMIT);return;}selectedShape=edit.count;memcpy(edit.samples[edit.count++],points,sizeof(edit.samples[0]));drawnN=0;refreshShapeCards();}
+static void appendEditorShape(const P*points){if(edit.count>=MAXS){specificError(SHAPE_LIMIT);return;}int index=edit.count;memcpy(edit.samples[edit.count++],points,sizeof(edit.samples[0]));drawnN=0;selectSingleShape(index);}
 static bool resolveAndSaveGesture(){
  Config transaction;Config*next=&transaction;if(!next->copyFrom(cfg)||(selected<0&&(!reserveMore(next->g,next->ng)||next->nextid>=0x7fffffff))){specificError(MEMORY_FAILURE_E);return false;}
  for(;;){auto f=bindingConflict(*next,edit,selected);if(f.other<0)break;W msg[768];cp(msg,et(conflictReason(f.kind)),768);cat(msg,L"\n\n",768);cat(msg,next->g[f.other].name,768);appendShapeInfo(msg,768,f.otherShape);if(f.kind==1){W key[128];keyname(edit.hotkey,edit.hotmods,key,128);cat(msg,L" — ",768);cat(msg,key,768);}else if(f.kind==2){cat(msg,L" — ",768);cat(msg,tr(SHAPE+edit.trigger),768);}cat(msg,L"\n\n",768);cat(msg,et(TRANSFER_HELP_E),768);shapeConflict=f.kind==3;confirmText=msg;KillTimer(mainwnd,101);
@@ -423,7 +488,7 @@ static void pickEditorAction(int replace){
  int index=commitAction(edit,replace,next);if(index>=0){actIndex=index;actionfields();}
 }
 static void command(int id,int code){if(loading)return;if(id==CANCELCREATE){if(code==0)cancelCreation();return;}if(dialogOwnerLimited)return;if(page==1&&appCommand(id,code))return;if(id>=TAB0&&id<=TAB2){setpage(id-TAB0);return;}if(id==SETBTN){if(code==0)openSettingsView();return;}if(id==APPBACK){settings=0;choosefirst();refresh();return;}if(id==TOGGLE){toggleEngine();return;}if(id==SEARCHBOX&&code==0x300){rebuildlist();if(!settings&&page==2){if(listdata(LIST)==-1){ruleIndex=-1;categorySelection=-1;}relayout();}return;}if(id==LIST&&code==1){int i=listdata(LIST);bool endedDraft=gestureDraft&&i!=-1;if(endedDraft)gestureDraft=false;if(i<=-2&&(gstview()||(!settings&&page==2))){categorySelection=-2-i;if(page==2)ruleIndex=-1;relayout();return;}if(i<0){if(!settings&&page==2){ruleIndex=-1;categorySelection=-1;relayout();}return;}if(!settings&&page==2&&!validExclusionIndex(cfg,i))return;bool wasCategory=categorySelection>=0||(!settings&&page==2&&!validExclusionIndex(cfg,ruleIndex));categorySelection=-1;if(gstview()){if(selected!=i){selected=i;edit=cfg.g[i];editfields();}}else if(ruleIndex!=i){ruleIndex=i;rule=(page==1?cfg.a:cfg.e)[i];editfields();}if(wasCategory||endedDraft)relayout();return;}if(id==LIST&&code==2&&!settings&&page==2){int i=listdata(LIST);if(i<=-2){toggleCategory(-2-i);return;}if(i>=0&&i<cfg.ne){Rule old=cfg.e[i],v=old;if(appSelector(v,true)&&confirmExclusionOverlap(v,&old)){cfg.e[i]=v;if(!persist())cfg.e[i]=old;ruleIndex=i;rule=cfg.e[i];refresh();}}return;}if(id==LIST&&code==2&&gstview()){int i=listdata(LIST);if(i<=-2)toggleCategory(-2-i);return;}if(id==APPGEST){if(ruleEdit){if(ruleIndex<0){error();return;}appId=cfg.a[ruleIndex].id;ruleEdit=0;}else{ruleEdit=1;appId=0;}choosefirst();refresh();return;}if(id==NEWBTN){newitem();return;}if(id==CATBTN){newCategory();return;}if(id==SAVEBTN){if(code!=0)return;if((page!=1||settings||appId)&&(settings||categorySelection<0))saveedit();return;}if(id==DUPBTN){if(gstview()&&selected>=0){startGestureDraft();saveactionfields();selected=-1;cat(edit.name,L" (2)",96);editfields();sl(LIST,-1);relayout();}else if(!gstview()&&ruleIndex>=0){ruleIndex=-1;cat(rule.name,L" (2)",96);editfields();sl(LIST,-1);}return;}if(id==DELBTN){if(code!=0||settings)return;int d=listdata(LIST);if(page==2&&d>=0){if(!validExclusionIndex(cfg,d)||!confirmDeletion(tr(CONFIRM_DELETE)))return;Rule removed=cfg.e[d];if(!removeExclusionAt(cfg,d))return;if(!persist()){for(int j=cfg.ne;j>d;j--)cfg.e[j]=cfg.e[j-1];cfg.e[d]=removed;cfg.ne++;}choosefirst();refresh();SetFocus(ctrl(LIST));return;}if((gstview()||(!settings&&page==2))&&d<=-2){deleteCategory(catFromData(d));return;}if(d<0)return;if(gstview())selected=d;else ruleIndex=d;if(!confirmDeletion(tr(CONFIRM_DELETE)))return;if(gstview()){int removedGlobal=cfg.g[selected].profile?0:cfg.g[selected].id;for(int i=selected;i<cfg.ng-1;i++)cfg.g[i]=cfg.g[i+1];cfg.ng--;if(removedGlobal)removeGlobalBlocks(cfg,0,removedGlobal);}else{int&n=page==1?cfg.na:cfg.ne;Rule*a=page==1?cfg.a:cfg.e;if(page==1){int key=a[ruleIndex].id;removeGlobalBlocks(cfg,key,0);for(int i=0;i<cfg.nc;)if(cfg.categories[i].profile==key){for(int j=i;j<cfg.nc-1;j++)cfg.categories[j]=cfg.categories[j+1];cfg.nc--;}else i++;for(int i=0;i<cfg.ng;)if(cfg.g[i].profile==key){for(int j=i;j<cfg.ng-1;j++)cfg.g[j]=cfg.g[j+1];cfg.ng--;}else i++;}for(int i=ruleIndex;i<n-1;i++)a[i]=a[i+1];n--;}persist();choosefirst();refresh();return;}if(id==BROWSEBTN){W path[1024]{};if(filechoose(path,false,true))txt(EXEBOX,path);return;}
- if(!gstview())return;if(id==TRIGGERBOX&&code==1){bool rocker=selection(TRIGGERBOX)==6;if(rocker){select(BUTTONBOX,1);}else if(!IsWindowEnabled(ctrl(BUTTONBOX))){select(BUTTONBOX,edit.button);}EnableWindow(ctrl(BUTTONBOX),!rocker);return;}if(id==RECBTN){recordstart(1);return;}if(id==KEYCLEAR){edit.hotkey=edit.hotmods=0;txt(KEYBOX,L"");return;}if(id==PRESETBTN){templates();return;}if(id==ADDSAMPLE){if(edit.count>=MAXS){specificError(SHAPE_LIMIT);return;}P sample[N];if(drawGestureShape(sample))appendEditorShape(sample);return;}if(id==RESETTRAIN){if(edit.count){int at=clamp(selectedShape,0,edit.count-1);for(int k=at;k+1<edit.count;k++)memcpy(edit.samples[k],edit.samples[k+1],sizeof(edit.samples[k]));--edit.count;refreshShapeCards();}return;}if(id==ACTLIST&&code==1){int i=ls(ACTLIST);if(i>=0){saveactionfields();actIndex=i;actionfields();}return;}if(id==ACTLIST&&code==2){int i=ls(ACTLIST);if(i>=0&&i<edit.steps)pickEditorAction(i);return;}if(id==ACTADD){pickEditorAction(-1);return;}if(id==ACTREC){if(!edit.steps)return;int type=edit.actions[actIndex].type;if(program_parameter::isProgram(type)){saveactionfields();if(editProgramAction(type,edit.actions[actIndex].arg))actionfields();return;}if(type!=0)return;W arg[256]{};if(recordActionHotkey(arg,256)){cp(edit.actions[actIndex].arg,arg,256);actionfields();}return;}if(id==ACTDEL){if(edit.steps){for(int i=actIndex;i<edit.steps-1;i++)edit.actions[i]=edit.actions[i+1];edit.steps--;actionfields();}return;}if(id==ACTUP||id==ACTDOWN){saveactionfields();int i=actIndex+(id==ACTUP?-1:1);if(i>=0&&i<edit.steps){Act a=edit.actions[i];edit.actions[i]=edit.actions[actIndex];edit.actions[actIndex]=a;actIndex=i;actionfields();}return;}if(id==TESTBTN){doTest();return;}}
+ if(!gstview())return;if(id==TRIGGERBOX&&code==1){bool rocker=selection(TRIGGERBOX)==6;if(rocker){select(BUTTONBOX,1);}else if(!IsWindowEnabled(ctrl(BUTTONBOX))){select(BUTTONBOX,edit.button);}EnableWindow(ctrl(BUTTONBOX),!rocker);return;}if(id==RECBTN){recordstart(1);return;}if(id==KEYCLEAR){edit.hotkey=edit.hotmods=0;txt(KEYBOX,L"");return;}if(id==PRESETBTN){templates();return;}if(id==ADDSAMPLE){if(edit.count>=MAXS){specificError(SHAPE_LIMIT);return;}P sample[N];if(drawGestureShape(sample))appendEditorShape(sample);return;}if(id==RESETTRAIN){removeSelectedShapes();return;}if(id==ACTLIST&&code==1){int i=ls(ACTLIST);if(i>=0){saveactionfields();actIndex=i;actionfields();}return;}if(id==ACTLIST&&code==2){int i=ls(ACTLIST);if(i>=0&&i<edit.steps)pickEditorAction(i);return;}if(id==ACTADD){pickEditorAction(-1);return;}if(id==ACTREC){if(!edit.steps)return;int type=edit.actions[actIndex].type;if(program_parameter::isProgram(type)){saveactionfields();if(editProgramAction(type,edit.actions[actIndex].arg))actionfields();return;}if(type!=0)return;W arg[256]{};if(recordActionHotkey(arg,256)){cp(edit.actions[actIndex].arg,arg,256);actionfields();}return;}if(id==ACTDEL){if(edit.steps){for(int i=actIndex;i<edit.steps-1;i++)edit.actions[i]=edit.actions[i+1];edit.steps--;actionfields();}return;}if(id==ACTUP||id==ACTDOWN){saveactionfields();int i=actIndex+(id==ACTUP?-1:1);if(i>=0&&i<edit.steps){Act a=edit.actions[i];edit.actions[i]=edit.actions[actIndex];edit.actions[actIndex]=a;actIndex=i;actionfields();}return;}if(id==TESTBTN){doTest();return;}}
 // Single-click selects; double-click opens the shared picker.
 static PROC actionListOld=nullptr;
 static LR CB actionListProc(HWND h,UINT m,WP w,LP l){
@@ -565,14 +630,22 @@ static bool uiSelfTest(){
  {setpage(0);int before=cfg.ng,prior=selected;newitem();if(!gestureDraft||!logicalPlace[CANCELCREATE].show||logicalPlace[CANCELCREATE].y+logicalPlace[CANCELCREATE].h>=logicalPlace[NEWBTN].y)return false;txt(NAMEBOX,L"Discard me");command(CANCELCREATE,0);if(gestureDraft||logicalPlace[CANCELCREATE].show||selected!=prior||cfg.ng!=before)return false;}
  {for(int pg=0;pg<3;pg++){setpage(pg);int buttons[]={pg==1?APPNEW:NEWBTN,pg==1?APPCAT:CATBTN};for(int id:buttons){bool previous=IsWindowEnabled(ctrl(id));{CreationModalScope scope(id);if(!logicalPlace[CANCELCREATE].show||logicalPlace[CANCELCREATE].x!=logicalPlace[id].x||logicalPlace[CANCELCREATE].y+logicalPlace[CANCELCREATE].h>=logicalPlace[id].y)return false;beginDialogOwner();if(!IsWindowEnabled(ctrl(CANCELCREATE))||IsWindowEnabled(ctrl(id))||!IsWindowEnabled(mainwnd))return false;endDialogOwner();}if(logicalPlace[CANCELCREATE].show||(IsWindowEnabled(ctrl(id))!=0)!=previous)return false;}}setpage(0);}
  int cat=ensureCategory(cfg,0,L"Smoke category");if(cat<0)return false;cp(cfg.g[0].folder,cfg.categories[cat].name,96);cfg.g[0].count=1;if(!compass(2,-1,cfg.g[0].samples[0]))return false;cfg.g[0].parallel=1;choosefirst();refresh();if(edit.count!=1||selection(EXECBOX)!=1||logicalPlace[FOLDERBOX].show||logicalPlace[SENSEBOX].show||!logicalPlace[NEWBTN].show)return false;
- // Multiple cards must fit, share paint/hit geometry and remove only the selected shape.
- {P sample[N];if(!compass(0,1,sample))return false;appendEditorShape(sample);
-  RECT r{};GetClientRect(canvas,&r);auto grid=shapeCardGrid(r);if(grid.count!=2||selectedShape!=1)return false;
-  auto first=grid.card(0);int x=(first.left+first.right)/2,y=(first.top+first.bottom)/2;
-  SendMessageW(canvas,0x201,0,(LP)((u16)x|((u32)(u16)y<<16)));
-  if(selectedShape!=0)return false;command(RESETTRAIN,0);
-  if(edit.count!=1||!sameShape(edit.samples[0],sample))return false;
-  edit=cfg.g[selected];selectedShape=0;refreshShapeCards();
+ // Verify click, Ctrl-toggle, Shift-range, marquee, and stable multi-delete.
+ {P sample[N],third[N],fourth[N];if(!compass(0,1,sample)||!compass(1,2,third)||!compass(3,4,fourth))return false;
+  appendEditorShape(sample);appendEditorShape(third);appendEditorShape(fourth);
+  RECT r{};GetClientRect(canvas,&r);auto grid=shapeCardGrid(r);if(grid.count!=4||shapeSelection!=8)return false;
+  auto center=[&](int i){auto q=grid.card(i);return (LP)((u16)((q.left+q.right)/2)|((u32)(u16)((q.top+q.bottom)/2)<<16));};
+  auto click=[&](int i,WP mods){SendMessageW(canvas,0x201,mods|1,center(i));SendMessageW(canvas,0x202,mods,center(i));};
+  click(0,0);if(shapeSelection!=1)return false;
+  click(2,8);if(shapeSelection!=5)return false;
+  click(2,8);if(shapeSelection!=1)return false;
+  click(0,0);click(2,4);if(shapeSelection!=7)return false;
+  SendMessageW(canvas,0x201,1,0);SendMessageW(canvas,0x200,1,(LP)((u16)r.right|((u32)(u16)r.bottom<<16)));SendMessageW(canvas,0x202,0,(LP)((u16)r.right|((u32)(u16)r.bottom<<16)));
+  if(shapeSelection!=15)return false;
+  click(0,0);click(2,8);command(RESETTRAIN,0);
+  if(edit.count!=2||!sameShape(edit.samples[0],sample)||!sameShape(edit.samples[1],fourth))return false;
+  shapeSelection=mgcards::all(edit.count);command(RESETTRAIN,0);if(edit.count||shapeSelection)return false;
+  edit=cfg.g[selected];selectSingleShape(0);
  }
  cfg.categories[cat].collapsed=1;rebuildlist();if(SendMessageW(ctrl(LIST),0x18b,0,0)!=cfg.ng)return false;cfg.categories[cat].collapsed=0;rebuildlist();if(SendMessageW(ctrl(LIST),0x18b,0,0)!=cfg.ng+1)return false;
  for(int lang=0;lang<6;lang++){cfg.lang=lang;Placement fixedTabs[3]{};for(int pg=0;pg<3;pg++){
