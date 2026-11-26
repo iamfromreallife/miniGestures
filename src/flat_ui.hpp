@@ -41,6 +41,29 @@ static const rounded_aa::Mask& cachedCorner(int rad,int mode){
  for(auto& e:cornerCache)if(e.radius==rad&&e.mode==mode)return e.mask;
  auto& e=cornerCache[nextCorner++%8];rounded_aa::make_mask(e.mask,rad,mode);e.radius=rad;e.mode=mode;return e.mask;
 }
+struct GlyphKey{int kind,w,h;DWORD fg,bg,extra;};
+struct GlyphCache{
+ struct Entry{GlyphKey key{};u32* pixels=nullptr;up age=0;};
+ Entry slots[24]{};up tick=0,pixelCount=0;
+ static constexpr up budget=65536;
+ static bool same(const GlyphKey&a,const GlyphKey&b){return a.kind==b.kind&&a.w==b.w&&a.h==b.h&&a.fg==b.fg&&a.bg==b.bg&&a.extra==b.extra;}
+ const u32* find(const GlyphKey&k){for(auto& e:slots)if(e.pixels&&same(e.key,k)){e.age=++tick;return e.pixels;}return nullptr;}
+ void drop(Entry& e){if(e.pixels){pixelCount-=(up)e.key.w*e.key.h;freep(e.pixels);e.pixels=nullptr;}}
+ bool remember(const GlyphKey& k,u32* pixels){if(!pixels||k.w<=0||k.h<=0)return false;up n=(up)k.w*k.h;if(n>budget)return false;
+  auto victim=[&](){Entry* v=&slots[0];for(auto& e:slots){if(!e.pixels)return &e;if(e.age<v->age)v=&e;}return v;};
+  while(pixelCount+n>budget){Entry* v=nullptr;for(auto& e:slots)if(e.pixels&&(!v||e.age<v->age))v=&e;if(!v)return false;drop(*v);}
+  auto* v=victim();drop(*v);v->key=k;v->pixels=pixels;v->age=++tick;pixelCount+=n;return true;
+ }
+ void clear(){for(auto& e:slots)drop(e);tick=0;}
+};
+static GlyphCache glyphCache;
+static void glyphBlit(HDC dc,int left,int top,int w,int h,const u32* pixels){CornerBitmapInfo bi{40,w,-h,1,32,0,(DWORD)(w*h*4),0,0,0,0};StretchDIBits(dc,left,top,w,h,0,0,w,h,pixels,&bi,0,0xcc0020);}
+template<class Paint> static void cachedGlyph(HDC dc,int left,int top,GlyphKey k,Paint paint){
+ if(!StretchDIBits||k.w<=0||k.h<=0)return;
+ if(auto* pixels=glyphCache.find(k)){glyphBlit(dc,left,top,k.w,k.h,pixels);return;}
+ auto* pixels=(u32*)allocRaw((up)k.w*k.h*4);if(!pixels)return;
+ if(paint(pixels)){glyphBlit(dc,left,top,k.w,k.h,pixels);if(glyphCache.remember(k,pixels))return;}freep(pixels);
+}
 static void rounded(HDC dc,RECT r,int radius,DWORD fill,DWORD border,bool outline=true,DWORD background=appFill){
  int w=r.right-r.left,h=r.bottom-r.top;if(w<=0||h<=0)return;
  int rad=minn(rounded_aa::max_radius,minn(maxn(0,radius),minn(w,h)/2));
@@ -55,15 +78,14 @@ static void rounded(HDC dc,RECT r,int radius,DWORD fill,DWORD border,bool outlin
   fillSolid(dc,{r.left+1,r.top+rad,r.right-1,r.bottom-rad},fill);
  }
  int mode=outline?1:0;const auto& mask=cachedCorner(rad,mode);
- CornerBitmapInfo bi{40,rad,-rad,1,32,0,(DWORD)(rad*rad*4),0,0,0,0};
- // UI-thread-only scratch storage; avoids allocations and large stack frames.
- static u32 pixels[rounded_aa::max_radius*rounded_aa::max_radius];
  for(int corner=0;corner<4;++corner){
-  for(int y=0;y<rad;++y)for(int x=0;x<rad;++x){
-   int sy=(corner&2)?rad-1-y:y,sx=(corner&1)?rad-1-x:x,k=sy*rad+sx;
-   pixels[y*rad+x]=rounded_aa::pixel(background,border,fill,mask.outer[k],mask.inner[k]);
-  }
-  StretchDIBits(dc,(corner&1)?r.right-rad:r.left,(corner&2)?r.bottom-rad:r.top,rad,rad,0,0,rad,rad,pixels,&bi,0,0xcc0020);
+  GlyphKey key{10+4*mode+corner,rad,rad,border,background,fill};
+  cachedGlyph(dc,(corner&1)?r.right-rad:r.left,(corner&2)?r.bottom-rad:r.top,key,[&](u32* pixels){
+   for(int y=0;y<rad;++y)for(int x=0;x<rad;++x){
+    int sy=(corner&2)?rad-1-y:y,sx=(corner&1)?rad-1-x:x,k=sy*rad+sx;
+    pixels[y*rad+x]=rounded_aa::pixel(background,border,fill,mask.outer[k],mask.inner[k]);
+   }return true;
+  });
  }
 }
 static void flatLine(HDC dc,const POINT* pts,int count,DWORD c,int thickness){if(count<2)return;H p=CreatePen(0,maxn(1,thickness),c);if(!p)return;H o=SelectObject(dc,p);Polyline(dc,pts,count);SelectObject(dc,o);DeleteObject(p);}
@@ -121,20 +143,50 @@ static float aaAbs(float v){return v<0?-v:v;}
 static float aaLen(float x,float y){x=aaAbs(x);y=aaAbs(y);float hi=x>y?x:y,lo=x>y?y:x;return hi+lo*0.375f;}
 static void aaBlend(u32& dst,u8 a,DWORD rgb){u32 dr=dst&255,dg=(dst>>8)&255,db=(dst>>16)&255;u32 sr=rgb&255,sg=(rgb>>8)&255,sb=(rgb>>16)&255;dr=(dr*(255-a)+sr*a+127)/255;dg=(dg*(255-a)+sg*a+127)/255;db=(db*(255-a)+sb*a+127)/255;dst=(db<<16)|(dg<<8)|dr;}
 static bool aaPointInTri(float px,float py,float x1,float y1,float x2,float y2,float x3,float y3){float d1=(px-x2)*(y1-y2)-(x1-x2)*(py-y2);float d2=(px-x3)*(y2-y3)-(x2-x3)*(py-y3);float d3=(px-x1)*(y3-y1)-(x3-x1)*(py-y1);bool n=(d1<0)||(d2<0)||(d3<0),p=(d1>0)||(d2>0)||(d3>0);return !(n&&p);}
-static void aaFillTri(u32* pix,int w,int h,float x1,float y1,float x2,float y2,float x3,float y3,DWORD rgb){int minx=maxn(0,(int)minn(int(x1),minn(int(x2),int(x3)))-1),maxx=minn(w-1,(int)maxn(int(x1),maxn(int(x2),int(x3)))+1),miny=maxn(0,(int)minn(int(y1),minn(int(y2),int(y3)))-1),maxy=minn(h-1,(int)maxn(int(y1),maxn(int(y2),int(y3)))+1);for(int y=miny;y<=maxy;y++)for(int x=minx;x<=maxx;x++){float px=x+0.5f,py=y+0.5f;if(aaPointInTri(px,py,x1,y1,x2,y2,x3,y3))aaBlend(pix[y*w+x],255,rgb);}}
-static void aaLine(u32* pix,int w,int h,float x1,float y1,float x2,float y2,float radius,DWORD rgb){float vx=x2-x1,vy=y2-y1,den=vx*vx+vy*vy;if(den<1e-4f)den=1;int minx=maxn(0,(int)(minn(int(x1),int(x2))-radius-1)),maxx=minn(w-1,(int)(maxn(int(x1),int(x2))+radius+1));int miny=maxn(0,(int)(minn(int(y1),int(y2))-radius-1)),maxy=minn(h-1,(int)(maxn(int(y1),int(y2))+radius+1));for(int y=miny;y<=maxy;y++)for(int x=minx;x<=maxx;x++){float px=x+0.5f,py=y+0.5f,t=((px-x1)*vx+(py-y1)*vy)/den;if(t<0)t=0;else if(t>1)t=1;float dx=px-(x1+t*vx),dy=py-(y1+t*vy),cover=radius+0.5f-aaLen(dx,dy);if(cover<=0)continue;aaBlend(pix[y*w+x],(u8)minn(255,maxn(0,(int)(cover*255))),rgb);}}
+static void aaFillTri(u32* pix,int w,int h,float x1,float y1,float x2,float y2,float x3,float y3,DWORD rgb,int firstRow=0){int minx=maxn(0,(int)minn(int(x1),minn(int(x2),int(x3)))-1),maxx=minn(w-1,(int)maxn(int(x1),maxn(int(x2),int(x3)))+1),miny=maxn(firstRow,(int)minn(int(y1),minn(int(y2),int(y3)))-1),maxy=minn(firstRow+h-1,(int)maxn(int(y1),maxn(int(y2),int(y3)))+1);for(int y=miny;y<=maxy;y++)for(int x=minx;x<=maxx;x++){float px=x+0.5f,py=y+0.5f;if(aaPointInTri(px,py,x1,y1,x2,y2,x3,y3))aaBlend(pix[(y-firstRow)*w+x],255,rgb);}}
+static void aaLine(u32* pix,int w,int h,float x1,float y1,float x2,float y2,float radius,DWORD rgb,int firstRow=0){float vx=x2-x1,vy=y2-y1,den=vx*vx+vy*vy;if(den<1e-4f)den=1;int minx=maxn(0,(int)(minn(int(x1),int(x2))-radius-1)),maxx=minn(w-1,(int)(maxn(int(x1),int(x2))+radius+1));int miny=maxn(firstRow,(int)(minn(int(y1),int(y2))-radius-1)),maxy=minn(firstRow+h-1,(int)(maxn(int(y1),int(y2))+radius+1));for(int y=miny;y<=maxy;y++)for(int x=minx;x<=maxx;x++){float px=x+0.5f,py=y+0.5f,t=((px-x1)*vx+(py-y1)*vy)/den;if(t<0)t=0;else if(t>1)t=1;float dx=px-(x1+t*vx),dy=py-(y1+t*vy),cover=radius+0.5f-aaLen(dx,dy);if(cover<=0)continue;aaBlend(pix[(y-firstRow)*w+x],(u8)minn(255,maxn(0,(int)(cover*255))),rgb);}}
 static void aaRect(u32* pix,int w,int h,int l,int t,int r,int b,DWORD rgb){l=maxn(0,l);t=maxn(0,t);r=minn(w,r);b=minn(h,b);for(int y=t;y<b;y++)for(int x=l;x<r;x++)aaBlend(pix[y*w+x],255,rgb);}
-static void aaDownsampleBlit(HDC dc,int left,int top,int w,int h,u32* hi,int scale){auto* lo=(u32*)allocRaw((up)w*h*4);if(!lo)return;for(int y=0;y<h;y++)for(int x=0;x<w;x++){u32 ar=0,ag=0,ab=0;for(int yy=0;yy<scale;yy++)for(int xx=0;xx<scale;xx++){u32 p=hi[(y*scale+yy)*(w*scale)+(x*scale+xx)];ar+=p&255;ag+=(p>>8)&255;ab+=(p>>16)&255;}u32 n=scale*scale;lo[y*w+x]=mgpaint::dib(((ar+n/2)/n)|(((ag+n/2)/n)<<8)|(((ab+n/2)/n)<<16));}CornerBitmapInfo bi{40,w,-h,1,32,0,(DWORD)(w*h*4),0,0,0,0};StretchDIBits(dc,left,top,w,h,0,0,w,h,lo,&bi,0,0xcc0020);freep(lo);} 
-static void aaPolylineToSurface(u32* pix,int w,int h,const POINT* pts,int count,float radius,DWORD rgb){for(int i=1;i<count;i++)aaLine(pix,w,h,(float)pts[i-1].x,(float)pts[i-1].y,(float)pts[i].x,(float)pts[i].y,radius,rgb);} 
-static bool drawPolylineAA(HDC dc,RECT bounds,const POINT* pts,int count,const POINT* tip,int tipCount,DWORD fg,DWORD bg,int thickness){if(count<2)return false;const int scale=8;int w=maxn(1,bounds.right-bounds.left),h=maxn(1,bounds.bottom-bounds.top),sw=w*scale,sh=h*scale;auto* hi=(u32*)allocRaw((up)sw*sh*4);if(!hi)return false;for(int i=0;i<sw*sh;i++)hi[i]=bg;auto mapPoint=[&](const POINT& p){POINT q{};q.x=(p.x-bounds.left)*scale+scale/2;q.y=(p.y-bounds.top)*scale+scale/2;return q;};float radius=maxn(1,thickness*scale)*0.5f;POINT linePts[512];int n=count>512?512:count;for(int i=0;i<n;i++)linePts[i]=mapPoint(pts[i]);aaPolylineToSurface(hi,sw,sh,linePts,n,radius,fg);if(tip&&tipCount>=2){POINT tipPts[8];int m=tipCount>8?8:tipCount;for(int i=0;i<m;i++)tipPts[i]=mapPoint(tip[i]);aaPolylineToSurface(hi,sw,sh,tipPts,m,radius,fg);if(m>=3)aaFillTri(hi,sw,sh,(float)tipPts[0].x,(float)tipPts[0].y,(float)tipPts[1].x,(float)tipPts[1].y,(float)tipPts[2].x,(float)tipPts[2].y,fg);}aaDownsampleBlit(dc,bounds.left,bounds.top,w,h,hi,scale);freep(hi);return true;}
-static void drawFolderArrowAA(HDC dc,int left,int top,int size,DWORD fg,DWORD bg,bool closed){const int scale=8;int sw=size*scale,sh=size*scale;auto* hi=(u32*)allocRaw((up)sw*sh*4);if(!hi)return;for(int i=0;i<sw*sh;i++)hi[i]=bg; if(closed)aaFillTri(hi,sw,sh,sw*0.28f,sh*0.20f,sw*0.72f,sh*0.50f,sw*0.28f,sh*0.80f,fg);else aaFillTri(hi,sw,sh,sw*0.18f,sh*0.32f,sw*0.50f,sh*0.68f,sw*0.82f,sh*0.32f,fg); aaDownsampleBlit(dc,left,top,size,size,hi,scale);freep(hi);}
+static void aaDownsample(u32* lo,int w,int h,const u32* hi,int scale){for(int y=0;y<h;y++)for(int x=0;x<w;x++){u32 ar=0,ag=0,ab=0;for(int yy=0;yy<scale;yy++)for(int xx=0;xx<scale;xx++){u32 p=hi[(y*scale+yy)*(w*scale)+(x*scale+xx)];ar+=p&255;ag+=(p>>8)&255;ab+=(p>>16)&255;}u32 n=scale*scale;lo[y*w+x]=mgpaint::dib(((ar+n/2)/n)|(((ag+n/2)/n)<<8)|(((ab+n/2)/n)<<16));}}
+static void aaPolylineToSurface(u32* pix,int w,int h,const POINT* pts,int count,float radius,DWORD rgb,int firstRow=0){for(int i=1;i<count;i++)aaLine(pix,w,h,(float)pts[i-1].x,(float)pts[i-1].y,(float)pts[i].x,(float)pts[i].y,radius,rgb,firstRow);} 
+// Render high-resolution strips into a bounded scratch surface, then resolve
+// the complete low-resolution image in one GDI transfer. Pixel coordinates,
+// line order, repeated integer alpha blends and rounding are unchanged.
+static bool drawPolylineAA(HDC dc,RECT bounds,const POINT* pts,int count,const POINT* tip,int tipCount,DWORD fg,DWORD bg,int thickness){
+ if(count<2)return false;const int scale=8;
+ int w=maxn(1,bounds.right-bounds.left),h=maxn(1,bounds.bottom-bounds.top),sw=w*scale;
+ const up rowBytes=(up)sw*scale*4;const int band=maxn(1,minn(h,(int)(4*1024*1024/rowBytes)));
+ auto* hi=(u32*)allocRaw(rowBytes*band);auto* lo=(u32*)allocRaw((up)w*h*4);
+ if(!hi||!lo){freep(hi);freep(lo);return false;}
+ auto mapPoint=[&](const POINT& p){return POINT{(p.x-bounds.left)*scale+scale/2,(p.y-bounds.top)*scale+scale/2};};
+ float radius=maxn(1,thickness*scale)*0.5f;POINT linePts[512],tipPts[8];
+ int n=count>512?512:count,m=tip&&tipCount>=2?minn(8,tipCount):0;
+ for(int i=0;i<n;i++)linePts[i]=mapPoint(pts[i]);for(int i=0;i<m;i++)tipPts[i]=mapPoint(tip[i]);
+ for(int y=0;y<h;y+=band){
+  int rows=minn(band,h-y),sh=rows*scale,firstRow=y*scale;
+  std::fill_n(hi,(up)sw*sh,bg);
+  aaPolylineToSurface(hi,sw,sh,linePts,n,radius,fg,firstRow);
+  if(m>=2){aaPolylineToSurface(hi,sw,sh,tipPts,m,radius,fg,firstRow);
+   if(m>=3)aaFillTri(hi,sw,sh,(float)tipPts[0].x,(float)tipPts[0].y,(float)tipPts[1].x,(float)tipPts[1].y,(float)tipPts[2].x,(float)tipPts[2].y,fg,firstRow);
+  }
+  aaDownsample(lo+(up)y*w,w,rows,hi,scale);
+ }
+ glyphBlit(dc,bounds.left,bounds.top,w,h,lo);freep(hi);freep(lo);return true;
+}
+static void drawFolderArrowAA(HDC dc,int left,int top,int size,DWORD fg,DWORD bg,bool closed){
+ cachedGlyph(dc,left,top,{closed?2:1,size,size,fg,bg,0},[&](u32* pixels){
+  const int scale=8;int sw=size*scale,sh=size*scale;auto* hi=(u32*)allocRaw((up)sw*sh*4);if(!hi)return false;
+  std::fill_n(hi,(up)sw*sh,bg);
+  if(closed)aaFillTri(hi,sw,sh,sw*0.28f,sh*0.20f,sw*0.72f,sh*0.50f,sw*0.28f,sh*0.80f,fg);
+  else aaFillTri(hi,sw,sh,sw*0.18f,sh*0.32f,sw*0.50f,sh*0.68f,sw*0.82f,sh*0.32f,fg);
+  aaDownsample(pixels,size,size,hi,scale);freep(hi);return true;
+ });
+}
 #include "folder_icon.hpp"
 static void drawFolderIconAA(HDC dc,RECT icon,DWORD bg){
  int w=icon.right-icon.left,h=icon.bottom-icon.top;if(w<=0||h<=0||w>256||h>256||!StretchDIBits)return;
- u32 pixels[256];u32* out=w*h<=256?pixels:(u32*)allocRaw((up)w*h*4);if(!out)return;
- for(int y=0;y<h;++y)for(int x=0;x<w;++x)out[y*w+x]=mgfolder::render(x,y,w,h,bg);
- CornerBitmapInfo bi{40,w,-h,1,32,0,(DWORD)(w*h*4),0,0,0,0};
- StretchDIBits(dc,icon.left,icon.top,w,h,0,0,w,h,out,&bi,0,0xcc0020);if(out!=pixels)freep(out);
+ cachedGlyph(dc,icon.left,icon.top,{3,w,h,0,bg,0},[&](u32* pixels){
+  for(int y=0;y<h;++y)for(int x=0;x<w;++x)pixels[y*w+x]=mgfolder::render(x,y,w,h,bg);return true;
+ });
 }
 struct DRAWITEM{UINT type,id,item,action,state;HWND hwnd;HDC dc;RECT rect;up data;};
 struct MEASUREITEM{UINT type,id,item,width,height;up data;};
