@@ -39,7 +39,7 @@ static int modalCreateButton=0;static bool dialogOwnerLimited=false;static bool 
 static int appCategory=-1;static int categorySelection=-1;static HWND popup=nullptr,drawCanvas=nullptr;static HWND settingsWnd=nullptr;static HWND settingsControls[164]{};static bool settingsLoading=false;static void openSettingsView();static void closeSettingsView();static void updateSettingsTheme();
 static void updateTrayIcon();
 static void indicatorThemeChanged();
-static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.12";
+static constexpr W versionCaption[]=L"by iamfromreallife  v2.0.13";
 static void failedGestureLabel(W* b,int cap,const W* name,int score){
  static const W* const failed[]={L"Gesture recognition failed",L"Falha no reconhecimento do gesto",L"Error de reconocimiento del gesto",L"Échec de la reconnaissance du geste",L"Gestenerkennung fehlgeschlagen",L"Riconoscimento del gesto non riuscito"};
  static const W* const similar[]={L" — Similar to ",L" — Semelhante a ",L" — Similar a ",L" — Similaire à ",L" — Ähnlich wie ",L" — Simile a "};
@@ -114,7 +114,7 @@ static void syncFooterLayout(){
  place[STATUSBOX]={v.statusX,v.footerY,v.statusW,v.textH,true};place[VERSIONBOX]={v.versionX,v.footerY,v.versionW,v.textH,true};
  if(footerWnd){SetWindowPos(footerWnd,nullptr,0,v.footerY,maxn(1,rr.right),maxn(1,rr.bottom-v.footerY),0x40|16);SetWindowPos(ctrl(STATUSBOX),nullptr,v.statusX,0,v.statusW,v.textH,0x40|4|16);SetWindowPos(ctrl(VERSIONBOX),nullptr,v.versionX,0,v.versionW,v.textH,0x40|4|16);}
 }
-static void applylayout(){int ids[164],n=0;Placement inner[164];UINT flags[164];for(int i=0;i<164;i++){if(!ctrl(i)||i==STATUSBOX||i==VERSIONBOX)continue;auto&p=place[i];auto&q=previous[i];if(laidout&&p.show==q.show&&(!p.show||(p.x==q.x&&p.y==q.y&&p.w==q.w&&p.h==q.h)))continue;ids[n]=i;inner[n]=p;inset(i,inner[n]);flags[n]=4|16;if(!laidout||p.show!=q.show)flags[n]|=p.show?0x40:0x80;if(!p.show)flags[n]|=1|2;n++;}if(!n)return;H d=BeginDeferWindowPos(n);for(int j=0;j<n&&d;j++){auto&p=inner[j];d=DeferWindowPos(d,ctrl(ids[j]),nullptr,p.x,p.y,p.w,p.h,flags[j]);}bool ok=d&&EndDeferWindowPos(d);if(!ok)for(int j=0;j<n;j++){auto&p=inner[j];SetWindowPos(ctrl(ids[j]),nullptr,p.x,p.y,p.w,p.h,flags[j]);}for(int j=0;j<n;j++){int id=ids[j];auto&p=place[id];if(p.show&&flatEdit(id))alignNativeEdit(ctrl(id),editorSurface(),{p.x,p.y,p.x+p.w,p.y+p.h},editTextHeight,maxn(1,px(2)));previous[id]=p;}laidout=true;}static void setfont(){font=CreateFontW(-px(12),0,0,0,400,0,0,0,1,0,0,5,0,L"Segoe UI");tabBold=CreateFontW(-px(12),0,0,0,700,0,0,0,1,0,0,5,0,L"Segoe UI");HDC dc=GetDC(mainwnd);if(dc){H old=SelectObject(dc,font);POINT ext{};GetTextExtentPoint32W(dc,L"Ag",2,&ext);SelectObject(dc,old);ReleaseDC(mainwnd,dc);editTextHeight=ext.y;editLineHeight=ext.y+px(2);}else {editTextHeight=px(16);editLineHeight=px(18);}}
+static void applylayout(){int ids[164],n=0;Placement inner[164];UINT flags[164];for(int i=0;i<164;i++){if(!ctrl(i)||i==STATUSBOX||i==VERSIONBOX)continue;auto&p=place[i];auto&q=previous[i];if(laidout&&p.show==q.show&&(!p.show||(p.x==q.x&&p.y==q.y&&p.w==q.w&&p.h==q.h)))continue;ids[n]=i;inner[n]=p;inset(i,inner[n]);flags[n]=4|16;/* Do not preserve stale list pixels when its size changes. */if(flatList(i)&&(!laidout||p.w!=q.w||p.h!=q.h))flags[n]|=0x100;if(!laidout||p.show!=q.show)flags[n]|=p.show?0x40:0x80;if(!p.show)flags[n]|=1|2;n++;}if(!n)return;H d=BeginDeferWindowPos(n);for(int j=0;j<n&&d;j++){auto&p=inner[j];d=DeferWindowPos(d,ctrl(ids[j]),nullptr,p.x,p.y,p.w,p.h,flags[j]);}bool ok=d&&EndDeferWindowPos(d);if(!ok)for(int j=0;j<n;j++){auto&p=inner[j];SetWindowPos(ctrl(ids[j]),nullptr,p.x,p.y,p.w,p.h,flags[j]);}for(int j=0;j<n;j++){int id=ids[j];auto&p=place[id];if(p.show&&flatEdit(id))alignNativeEdit(ctrl(id),editorSurface(),{p.x,p.y,p.x+p.w,p.y+p.h},editTextHeight,maxn(1,px(2)));if(flatList(id)&&p.show&&(!laidout||p.w!=previous[id].w||p.h!=previous[id].h))InvalidateRect(ctrl(id),nullptr,1);previous[id]=p;}laidout=true;}static void setfont(){font=CreateFontW(-px(12),0,0,0,400,0,0,0,1,0,0,5,0,L"Segoe UI");tabBold=CreateFontW(-px(12),0,0,0,700,0,0,0,1,0,0,5,0,L"Segoe UI");HDC dc=GetDC(mainwnd);if(dc){H old=SelectObject(dc,font);POINT ext{};GetTextExtentPoint32W(dc,L"Ag",2,&ext);SelectObject(dc,old);ReleaseDC(mainwnd,dc);editTextHeight=ext.y;editLineHeight=ext.y+px(2);}else {editTextHeight=px(16);editLineHeight=px(18);}}
 // Each view uses the widest visible localized label, plus a 30 DIP gap.
 static constexpr int labelGap=30;
 // Cache by DPI and language; resize does not measure text repeatedly.
@@ -150,7 +150,7 @@ static int tabCaptionWidth(int id){return captionWidth(id);}
 static int groupWidth(const int* ids,int n){int w=(n-1)*3;for(int i=0;i<n;i++)w+=captionWidth(ids[i]);return w;}
 static const int shapeButtons[]={ADDSAMPLE,RESETTRAIN,PRESETBTN};
 static const int actionButtons[]={ACTADD,ACTUP,ACTDOWN,ACTDEL};
-static constexpr int sidebarWidth=176, statusOffset=21, statusVersionWidth=footerVersionWidth, contentGap=22, tabContentGap=contentGap-6, footerButtonHeight=23, footerOffset=statusOffset+contentGap+footerButtonHeight, tabTop=8, tabHeight=26, contentTop=tabTop+tabHeight+tabContentGap, paneTitleHeight=20, paneTitlePitch=26;
+static constexpr int sidebarWidth=176,gestureSidebarExtra=50, statusOffset=21, statusVersionWidth=footerVersionWidth, contentGap=22, tabContentGap=contentGap-6, footerButtonHeight=23, footerOffset=statusOffset+contentGap+footerButtonHeight, tabTop=8, tabHeight=26, contentTop=tabTop+tabHeight+tabContentGap, paneTitleHeight=20, paneTitlePitch=26;
 // Pane headings are fixed-position labels. Change only their font weight.
 static int activePaneHeading=GESTHEAD;
 static void applyPaneHeading(){
@@ -191,10 +191,11 @@ struct PaneInteraction{
  }
  ~PaneInteraction(){HWND after=GetFocus();if(after!=before)selectPaneHeading(paneForWindow(after));}
 };
-static int compactClientWidth(){if(!ctrl(TAB0))return 720;int tabs[]={TAB0,TAB1,TAB2};
+static int gestureSidebarWidth(){return sidebarWidth+((!settings&&page!=2)?gestureSidebarExtra:0);}
+static int compactClientWidth(){if(!ctrl(TAB0))return 720+gestureSidebarExtra;int tabs[]={TAB0,TAB1,TAB2};
  int editor=maxn(250,maxn(groupWidth(shapeButtons,3),groupWidth(actionButtons,4)));editor=maxn(editor,captionWidth(RECBTN)+captionWidth(KEYCLEAR)+96);editor=maxn(editor,captionWidth(BROWSEBTN)+140);
  int labels=0;for(int i=0;i<4;i++)labels=maxn(labels,labelColumn(i));if(!settings&&page==1)labels=maxn(labels,labelColumn(4));
- int footer=maxn(114,captionWidth(SAVEBTN))+captionWidth(IMPORTBTN)+captionWidth(EXPORTBTN)+36;return maxn(610,maxn(footer,maxn(groupWidth(tabs,3)+captionWidth(SETBTN)+36,sidebarWidth+50+labels+editor+(!settings&&page==1?196:0))));}
+ int footer=maxn(114,captionWidth(SAVEBTN))+captionWidth(IMPORTBTN)+captionWidth(EXPORTBTN)+36;return maxn(610,maxn(footer,maxn(groupWidth(tabs,3)+captionWidth(SETBTN)+36,gestureSidebarWidth()+50+labels+editor+(!settings&&page==1?196:0))));}
 static constexpr int minimumClientHeight=704;
 static constexpr DWORD mainStyle=0x00cf0000|0x02000000;
 static POINT minimumOuter(HWND h){
@@ -217,10 +218,10 @@ static void relayout(){
  // origin is always (0,0), so existing layout and hit testing stay local.
  if(editorContent){RECT current{};if(GetClientRect(editorContent,&current)&&
     (current.right!=rr.right||current.bottom!=rr.bottom))
-   SetWindowPos(editorContent,nullptr,0,0,maxn(1,rr.right),maxn(1,rr.bottom),4|16|0x200);}
+   SetWindowPos(editorContent,nullptr,0,0,maxn(1,rr.right),maxn(1,rr.bottom),4|16|0x200|0x100);}
  memset(logicalPlace,0,sizeof(logicalPlace));memset(place,0,sizeof(place));int w=maxn(1,rr.right*96/dpi),h=maxn(1,rr.bottom*96/dpi);virtualW=px(w);virtualH=px(h);
  const int margin=12,gap=3,vgap=5,fieldH=22,pitch=26,buttonH=footerButtonHeight;
- bool apps=!settings&&page==1;int appWidth=apps?176:0,offset=apps?appWidth+12:0;int left=sidebarWidth+clamp((w-compactClientWidth())/5,0,180),x=offset+left+margin+18,lab=labelColumn(labelView()),fx=x+lab;int fw=w-x-margin,ed=fw-lab;
+ bool apps=!settings&&page==1;int appWidth=apps?176:0,offset=apps?appWidth+12:0;int left=gestureSidebarWidth()+clamp((w-compactClientWidth()+gestureSidebarWidth()-sidebarWidth)/5,0,180),x=offset+left+margin+18,lab=labelColumn(labelView()),fx=x+lab;int fw=w-x-margin,ed=fw-lab;
  int base=contentTop+paneTitlePitch;
  hide(TOGGLE);
  int tabids[]={TAB0,TAB1,TAB2};int tx=margin,setw=captionWidth(SETBTN)+14;
@@ -832,7 +833,7 @@ static bool uiSelfTest(){
    int bottomChecks[]={LIST,NEWBTN,SAVEBTN,TESTBTN,IMPORTBTN,EXPORTBTN};for(int id:bottomChecks)if(logicalPlace[id].show&&logicalPlace[STATUSBOX].y-(logicalPlace[id].y+logicalPlace[id].h)<px(contentGap)-1)return false;
    if(logicalPlace[NEWBTN].show&&(logicalPlace[NEWBTN].x!=logicalPlace[LIST].x||logicalPlace[NEWBTN].w!=logicalPlace[LIST].w||logicalPlace[LIST].y+logicalPlace[LIST].h>logicalPlace[NEWBTN].y||logicalPlace[STATUSBOX].y-(logicalPlace[NEWBTN].y+logicalPlace[NEWBTN].h)<px(contentGap)-1))return false;
    if(logicalPlace[SAVEBTN].show&&logicalPlace[STATUSBOX].y-(logicalPlace[SAVEBTN].y+logicalPlace[SAVEBTN].h)<px(contentGap)-1)return false;
-   {RECT client{};GetClientRect(mainwnd,&client);if(logicalPlace[IMPORTBTN].show!=(pg==3)||logicalPlace[EXPORTBTN].show!=(pg==3))return false;if(pg==3&&(logicalPlace[EXPORTBTN].x+logicalPlace[EXPORTBTN].w>logicalPlace[IMPORTBTN].x||logicalPlace[SAVEBTN].x+logicalPlace[SAVEBTN].w>logicalPlace[EXPORTBTN].x))return false;if(pg!=3&&(logicalPlace[LIST].w<px(sidebarWidth)||logicalPlace[LIST].x+logicalPlace[LIST].w>logicalPlace[LABNAME].x&&logicalPlace[LABNAME].show))return false;if(pg==0&&logicalPlace[NAMEBOX].show){if(absn(logicalPlace[NAMEBOX].x+logicalPlace[NAMEBOX].w-(virtualW-px(12)))>2)return false;if(logicalPlace[ACTADD].x+logicalPlace[ACTADD].w>logicalPlace[ACTUP].x||logicalPlace[ACTUP].x+logicalPlace[ACTUP].w>logicalPlace[ACTDOWN].x||logicalPlace[ACTDOWN].x+logicalPlace[ACTDOWN].w>logicalPlace[ACTDEL].x||logicalPlace[ACTDEL].x+logicalPlace[ACTDEL].w>virtualW)return false;if(!logicalPlace[ADDITIONALHEADER].show||logicalPlace[ADDITIONALHEADER].y<logicalPlace[ACTHINT].y+logicalPlace[ACTHINT].h||logicalPlace[BUTTONBOX].y<logicalPlace[ADDITIONALHEADER].y+logicalPlace[ADDITIONALHEADER].h||logicalPlace[MODBOX].y<=logicalPlace[BUTTONBOX].y||logicalPlace[KEYBOX].y<=logicalPlace[MODBOX].y||logicalPlace[KEYBOX].y+logicalPlace[KEYBOX].h>logicalPlace[SAVEBTN].y)return false;}}
+   {RECT client{};GetClientRect(mainwnd,&client);if(logicalPlace[IMPORTBTN].show!=(pg==3)||logicalPlace[EXPORTBTN].show!=(pg==3))return false;if(pg==3&&(logicalPlace[EXPORTBTN].x+logicalPlace[EXPORTBTN].w>logicalPlace[IMPORTBTN].x||logicalPlace[SAVEBTN].x+logicalPlace[SAVEBTN].w>logicalPlace[EXPORTBTN].x))return false;if(pg!=3&&(logicalPlace[LIST].w<px(gestureSidebarWidth())||logicalPlace[LIST].x+logicalPlace[LIST].w>logicalPlace[LABNAME].x&&logicalPlace[LABNAME].show))return false;if(pg==0&&logicalPlace[NAMEBOX].show){if(absn(logicalPlace[NAMEBOX].x+logicalPlace[NAMEBOX].w-(virtualW-px(12)))>2)return false;if(logicalPlace[ACTADD].x+logicalPlace[ACTADD].w>logicalPlace[ACTUP].x||logicalPlace[ACTUP].x+logicalPlace[ACTUP].w>logicalPlace[ACTDOWN].x||logicalPlace[ACTDOWN].x+logicalPlace[ACTDOWN].w>logicalPlace[ACTDEL].x||logicalPlace[ACTDEL].x+logicalPlace[ACTDEL].w>virtualW)return false;if(!logicalPlace[ADDITIONALHEADER].show||logicalPlace[ADDITIONALHEADER].y<logicalPlace[ACTHINT].y+logicalPlace[ACTHINT].h||logicalPlace[BUTTONBOX].y<logicalPlace[ADDITIONALHEADER].y+logicalPlace[ADDITIONALHEADER].h||logicalPlace[MODBOX].y<=logicalPlace[BUTTONBOX].y||logicalPlace[KEYBOX].y<=logicalPlace[MODBOX].y||logicalPlace[KEYBOX].y+logicalPlace[KEYBOX].h>logicalPlace[SAVEBTN].y)return false;}}
    if(pg==3&&(logicalPlace[LABLANG].x!=px(12)||logicalPlace[OVERBOX].x!=px(12)||logicalPlace[SAVEBTN].x!=px(12)))return false;
    if(pg==0){if(ctrl(ACTCOMBO)||logicalPlace[ACTCOMBO].show||!(logicalPlace[ACTADD].x<logicalPlace[ACTUP].x&&logicalPlace[ACTUP].x<logicalPlace[ACTDOWN].x&&logicalPlace[ACTDOWN].x<logicalPlace[ACTDEL].x))return false;if(SendMessageW(ctrl(BUTTONBOX),0x146,0,0)!=6)return false;if(SendMessageW(ctrl(LIST),0x1a1,0,0)!=px(21))return false;}
   }

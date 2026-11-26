@@ -80,6 +80,10 @@ static LR CB listEditorProc(HWND h,UINT m,WP w,LP l){bool apps=h==ctrl(APPLIST),
  if(m==0x113&&w==71){if(dragging){POINT p{};GetCursorPos(&p);ScreenToClient(h,&p);RECT b{};GetClientRect(h,&b);if(p.x>=0&&p.x<b.right){int top=(int)SendMessageW(h,0x18e,0,0),next=top;int n=rowCount(h);if(p.y<px(16)&&p.y>=-px(24)&&top>0)next--;else if(p.y>b.bottom-px(16)&&p.y<=b.bottom+px(24)&&top<n-1)next++;if(next!=top){invalidateMarker(h,dropTarget);SendMessageW(h,0x197,next,0);InvalidateRect(h,nullptr,0);dropTarget=DropTarget{};}updateDrop(h,p.x,clamp(p.y,0,maxn(0,b.bottom-1)));}else updateDrop(h,p.x,p.y);}return 0;}
  if(m==0x202&&dragSource!=-1&&dragOwner==h){int source=dragSource;bool was=dragging;DropTarget t;if(was)t=hitDrop(h,(short)LO(l),(short)HI(l));cancelListDrag(h);if(was){if(apps)finishAppDrop(source,t);else if(ex)finishExclusionDrop(source,t);else finishDrop(source,t);}return 0;}
  if(m==0x215||m==0x1f){if(dragSource!=-1&&dragOwner==h)cancelListDrag(h,m!=0x215);}
- LR result=CallWindowProcW(apps?appListOld:listOld,h,m,w,l);if(m==0xf&&dragOwner==h)drawDrop(h);return result;
+ LR result=CallWindowProcW(apps?appListOld:listOld,h,m,w,l);
+ // Native list boxes may preserve their old pixels on resize; our preview
+ // column is right-aligned and must be painted again across the entire list.
+ if(m==0x5)InvalidateRect(h,nullptr,1);
+ if(m==0xf&&dragOwner==h)drawDrop(h);return result;
 }
 static void installListSubclass(){listOld=(PROC)SetWindowLongPtrW(ctrl(LIST),-4,(ip)listEditorProc);appListOld=(PROC)SetWindowLongPtrW(ctrl(APPLIST),-4,(ip)listEditorProc);}
