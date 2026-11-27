@@ -579,17 +579,23 @@ BOOL CALLBACK refreshHiddenFileWindow(HWND window,LPARAM){
 }
 }
 
-extern "C" int WINAPI NativeToggleHiddenFiles(){
+extern "C" int WINAPI NativeToggleHiddenFiles(int includeProtected){
     // Serialize the read/modify/write even when gestures run in parallel.
     AcquireSRWLockExclusive(&hiddenFilesLock);
+    const DWORD mask=SSF_SHOWALLOBJECTS|(includeProtected?SSF_SHOWSUPERHIDDEN:0);
     SHELLSTATE state{};
-    SHGetSetSettings(&state,SSF_SHOWALLOBJECTS,FALSE);
-    state.fShowAllObjects=!state.fShowAllObjects;
-    const bool show=state.fShowAllObjects!=0;
-    SHGetSetSettings(&state,SSF_SHOWALLOBJECTS,TRUE);
+    SHGetSetSettings(&state,mask,FALSE);
+    // If either setting is off, reveal both. Only hide both when both
+    // are already enabled. The ordinary action never changes system files.
+    const bool show=!(state.fShowAllObjects&&(!includeProtected||state.fShowSuperHidden));
+    // SHELLSTATE uses one-bit BOOL fields, so assign the Boolean directly.
+    state.fShowAllObjects=show;
+    if(includeProtected)state.fShowSuperHidden=show;
+    SHGetSetSettings(&state,mask,TRUE);
     SHELLSTATE actual{};
-    SHGetSetSettings(&actual,SSF_SHOWALLOBJECTS,FALSE);
-    const bool applied=(actual.fShowAllObjects!=0)==show;
+    SHGetSetSettings(&actual,mask,FALSE);
+    const bool applied=((actual.fShowAllObjects!=0)==show)&&
+                       (!includeProtected||((actual.fShowSuperHidden!=0)==show));
     ReleaseSRWLockExclusive(&hiddenFilesLock);
     // Refresh all currently open views. The asynchronous fallback covers
     // windows not exposed by the COM enumeration.

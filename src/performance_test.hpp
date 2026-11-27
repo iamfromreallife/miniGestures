@@ -116,10 +116,15 @@ static bool json(){
 }
 // Test registration and runtime packing without changing Explorer settings.
 static bool hiddenFilesAction(){
- Gesture g{};Act a{};a.type=TOGGLE_HIDDEN_FILES_ACTION;
- if(commitAction(g,-1,a)!=0||g.steps!=1||actionGroup(a.type)!=1||retiredAction(a.type))return false;
- RuntimeAction packed{};prepareAction(packed,g.actions[0]);
- return packed.type==a.type&&defs[a.type].vk==0&&!*defs[a.type].hint&&*defs[a.type].name[0];
+ Gesture g{};
+ for(int type: {TOGGLE_HIDDEN_FILES_ACTION,TOGGLE_ALL_HIDDEN_FILES_ACTION}){
+  Act a{};a.type=type;int index=g.steps;
+  if(commitAction(g,-1,a)!=index||g.steps!=index+1||actionGroup(type)!=1||retiredAction(type))return false;
+  RuntimeAction packed{};prepareAction(packed,g.actions[index]);
+  if(packed.type!=type||defs[type].vk!=0||*defs[type].hint)return false;
+  for(int lang=0;lang<6;++lang)if(!*defs[type].name[lang])return false;
+ }
+ return g.steps==2;
 }
 static bool run(){return normalization()&&regex()&&runtime()&&raster()&&trailGrowth()&&json()&&hiddenFilesAction();}
 }
