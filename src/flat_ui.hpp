@@ -106,12 +106,15 @@ static void flatFace(HWND h,HDC dest,int id){RECT r{};GetClientRect(h,&r);if(r.r
  }
  if(bmp){BitBlt(dest,0,0,r.right,r.bottom,mem,0,0,0xcc0020);SelectObject(mem,old);DeleteObject(bmp);}if(mem)DeleteDC(mem);
 }
+static void installComboPopup(HWND combo);
 static LR CB flatProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h);if(id<0||id>=164||!flatOld[id])return DefWindowProcW(h,m,w,l);PROC orig=flatOld[id];bool face=flatCombo(id)||flatCheck(id);
  if(m==0x200&&!flatHover[id]){flatHover[id]=true;TrackMouse t{sizeof(t),2,h,0};TrackMouseEvent(&t);InvalidateRect(h,nullptr,0);}else if(m==0x2a3){flatHover[id]=false;InvalidateRect(h,nullptr,0);}else if(m==0x201){flatDown[id]=true;InvalidateRect(h,nullptr,0);}else if(m==0x202||m==0x215){flatDown[id]=false;InvalidateRect(h,nullptr,0);}
  if(m==0x18&&!w){flatHover[id]=false;flatDown[id]=false;}if(face&&m==0x14)return 1;
  if(face&&m==0xf){PAINT p{};HDC dc=BeginPaint(h,&p);flatFace(h,dc,id);EndPaint(h,&p);return 0;}
  if(face&&m==0x318){flatFace(h,(HDC)w,id);return 0;}
  if(flatCombo(id)&&m==0x134&&fieldBrush){SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;}
+ // Some native combos may allocate or recreate their list lazily.
+ if(flatCombo(id)&&(m==0x201||m==0x100||m==0x104||(m==0x14f&&w)))installComboPopup(h);
  // Native processing still owns selections, notifications, focus, keyboard and popup.
  LR result=CallWindowProcW(orig,h,m,w,l);
  if(face&&(m==0x7||m==0x8||m==0xa||m==0xc||m==0x30||m==0x5||m==0x100||m==0x101||m==0x104||m==0x105||m==0xf1||m==0x14e||m==0x143||m==0x14b||m==0x14f||m==0x201||m==0x202||m==0x207||m==0x20a||m==0x215))InvalidateRect(h,nullptr,0);
@@ -120,7 +123,6 @@ static LR CB flatProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h);if(id<0||i
  if(flatCombo(id)&&(m==0x7||m==0x8))UpdateWindow(h);
  return result;
 }
-static void installComboPopup(HWND combo);
 static void flatSubclass(int id){flatOld[id]=(PROC)SetWindowLongPtrW(ctrl(id),-4,(ip)flatProc);if(flatCombo(id))installComboPopup(ctrl(id));}
 #include "text_alignment.hpp"
 // Native edits keep their keyboard, IME, selection and clipboard behavior.
@@ -390,7 +392,9 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
  }
  if(fieldBrush){
   if(m==0x14){ // WM_ERASEBKGND: never use the native white class brush.
-   RECT r{};GetClientRect(h,&r);if(w)FillRect((HDC)w,&r,fieldBrush);return 1;
+   // Even an explicit erase paints a complete buffered client, rather
+   // than exposing an intermediate blank surface in either theme.
+   if(w)comboPopupClient(h,(HDC)w);return 1;
   }
   if(m==0xf){ // WM_PAINT
    if(w){comboPopupClient(h,(HDC)w);return 0;}
@@ -406,7 +410,7 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
      RECT bounds{0,0,outer.right-outer.left,outer.bottom-outer.top};
      fillSolid(dc,bounds,frame);
      // Keep the native nonclient/scrollbar rendering, not its client erase.
-     if(l&2)CallWindowProcW(original,h,m,w,2);
+     if(l&2){int nc=SaveDC(dc);if(nc){CallWindowProcW(original,h,m,w,2);RestoreDC(dc,nc);}}
      int x=origin.x-outer.left,y=origin.y-outer.top;
      OffsetViewportOrgEx(dc,x,y,nullptr);
      IntersectClipRect(dc,0,0,client.right,client.bottom);
