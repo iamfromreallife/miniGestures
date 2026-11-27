@@ -60,7 +60,8 @@ constexpr Color selectionHighlight(Color accent,Color field,bool dark){
  Color shade=mix(base,dark?rgb(0,0,0):rgb(255,255,255),dark?40:20);
  // A very pale system accent on a white field (or the reverse in dark
  // mode) still needs a distinguishable selection background.
- return contrastAtLeast(shade,field,13)?shade:mix(shade,contrastInk(field),20);
+ Color selected=contrastAtLeast(shade,field,13)?shade:mix(shade,contrastInk(field),20);
+ return dark?selected:mix(selected,rgb(255,255,255),20);
 }
 constexpr Color gestureInk(Color bg,Color preferred=gestureBlue,unsigned minimum=45){
  return contrastAtLeast(bg,preferred,minimum)?preferred:contrastInk(bg);
@@ -68,7 +69,7 @@ constexpr Color gestureInk(Color bg,Color preferred=gestureBlue,unsigned minimum
 static_assert(gestureInk(gestureBlue)!=gestureBlue);
 static_assert(contrastAtLeast(gestureInk(gestureBlue),gestureBlue,45));
 static_assert(contrastAtLeast(contrastInk(rgb(255,255,0)),rgb(255,255,0),45));
-static_assert(selectionHighlight(gestureBlue,rgb(255,255,255),false)==rgb(153,201,238));
+static_assert(selectionHighlight(gestureBlue,rgb(255,255,255),false)==rgb(173,212,241));
 static_assert(selectionHighlight(gestureBlue,rgb(42,42,42),true)==rgb(77,113,140));
 constexpr unsigned brightness(Color c){return (299*(c&255)+587*((c>>8)&255)+114*((c>>16)&255))/1000;}
 constexpr unsigned separation(Color a,Color b){return brightness(a)>brightness(b)?brightness(a)-brightness(b):brightness(b)-brightness(a);}

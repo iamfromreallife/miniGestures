@@ -379,6 +379,10 @@ static void comboPopupClient(HWND list,HDC dest){
  if(top>=0&&count>0)for(int i=top;i<count;i++){
   RECT r{};if(SendMessageW(list,0x198,i,(LP)&r)<0)break; // LB_GETITEMRECT
   if(r.top>=h)break;if(r.bottom<=0)continue;
+  // Some native list rects retain the pre-scrollbar width. Clip the
+  // item to the actual current client bounds, not the drop rectangle.
+  r.left=maxn(0,r.left);r.right=minn(w,r.right);
+  if(r.right<=r.left)continue;
   if(i==current){RECT q{r.left+unit(1),r.top+unit(1),r.right-unit(1),r.bottom-unit(1)};
    DWORD bg=rowSelectionFill(highContrastTheme);rounded(dc,q,unit(4),bg,bg,false,fieldFill);}
   W value[1024]{};LR n=SendMessageW(list,0x18a,i,0);
@@ -393,7 +397,7 @@ static void comboPopupClient(HWND list,HDC dest){
 // The native scrollbar is nonclient area, outside WM_PAINT and the
 // owner-drawn rows. Paint the entire frame/scrollbar from our palette,
 // using USER32's actual scrollbar geometry so native hit-testing agrees.
-static void comboPopupFrame(HWND h,HDC dc){
+static void comboPopupFrameCore(HWND h,HDC dc){
  if(!dc||!fieldBrush)return;
  RECT outer{},client{};POINT origin{};
  if(!GetWindowRect(h,&outer)||!GetClientRect(h,&client)||!ClientToScreen(h,&origin))return;
@@ -406,7 +410,10 @@ static void comboPopupFrame(HWND h,HDC dc){
  MGScrollBarInfo sb{};sb.cbSize=sizeof(sb);
  // OBJID_VSCROLL = -5; the RECT is in screen coordinates.
  if(GetScrollBarInfo(h,-5,&sb)&&!(sb.state[0]&(0x8000u|0x10000u))){
-  RECT r{sb.rect.left-outer.left,sb.rect.top-outer.top,sb.rect.right-outer.left,sb.rect.bottom-outer.top};
+  // Keep the native scrollbar inside the frame; never let its paint
+  // erase the outside edge, even if its reported rectangle overlaps it.
+  RECT r{maxn(1,sb.rect.left-outer.left),maxn(1,sb.rect.top-outer.top),
+         minn(w-1,sb.rect.right-outer.left),minn(ht-1,sb.rect.bottom-outer.top)};
   if(r.right>r.left&&r.bottom>r.top){
    DWORD track=highContrastTheme?fieldFill:mgtheme::mix(fieldFill,ink,5);
    fillSolid(dc,r,track);
@@ -427,7 +434,43 @@ static void comboPopupFrame(HWND h,HDC dc){
    }
   }
  }
+ // Explicit continuous outside edge. ExcludeClipRect above still
+ // protects the list client, including any partially visible item.
+ fillSolid(dc,{0,0,w,1},frame);
+ fillSolid(dc,{0,ht-1,w,ht},frame);
+ fillSolid(dc,{0,1,1,ht-1},frame);
+ fillSolid(dc,{w-1,1,w,ht-1},frame);
  RestoreDC(dc,saved);
+}
+// Compose nonclient paint off-screen and transfer only its four bands.
+// Prevent a visible intermediate frame fill and protect client pixels
+// from scrollbar/border paint even during native mouse tracking.
+static void comboPopupFrame(HWND h,HDC dest){
+ if(!dest||!fieldBrush)return;
+ RECT outer{},client{};POINT origin{};
+ if(!GetWindowRect(h,&outer)||!GetClientRect(h,&client)||!ClientToScreen(h,&origin))return;
+ int w=outer.right-outer.left,ht=outer.bottom-outer.top;
+ if(w<=0||ht<=0)return;
+ int x=clamp(origin.x-outer.left,0,w),y=clamp(origin.y-outer.top,0,ht);
+ int right=clamp(x+client.right,x,w),bottom=clamp(y+client.bottom,y,ht);
+ bool cached=!buttonBuffer.busy&&(up)w*ht<=131072&&buttonBuffer.ensure(dest,w,ht);
+ HDC mem=cached?buttonBuffer.dc:CreateCompatibleDC(dest);
+ H bmp=cached?buttonBuffer.bmp:mem?CreateCompatibleBitmap(dest,w,ht):nullptr;
+ H old=bmp?SelectObject(mem,bmp):nullptr;
+ if(!old||old==PTR(-1)){
+  if(cached)buttonBuffer.clear();else{if(bmp)DeleteObject(bmp);if(mem)DeleteDC(mem);}
+  comboPopupFrameCore(h,dest);return;
+ }
+ if(cached)buttonBuffer.busy=true;
+ fillSolid(mem,{0,0,w,ht},frame);
+ comboPopupFrameCore(h,mem);
+ auto band=[&](int left,int top,int width,int height){
+  if(width>0&&height>0)BitBlt(dest,left,top,width,height,mem,left,top,0xcc0020);
+ };
+ band(0,0,w,y);band(0,bottom,w,ht-bottom);
+ band(0,y,x,bottom-y);band(right,y,w-right,bottom-y);
+ SelectObject(mem,old);
+ if(cached)buttonBuffer.busy=false;else{DeleteObject(bmp);DeleteDC(mem);}
 }
 static void refreshComboFrame(HWND h){
  if(!IsWindowVisible(h))return;
@@ -472,7 +515,10 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
    if(GetWindowRect(h,&outer)&&GetClientRect(h,&client)&&ClientToScreen(h,&origin)){
     int saved=SaveDC(dc);
     if(saved){
-     if(l&2)comboPopupFrame(h,dc); // no native white nonclient snapshot
+     // WM_PRINT is window-relative. Animation captures can omit
+     // PRF_NONCLIENT while still copying the full window bitmap.
+     if(l&(4|8))fillSolid(dc,{0,0,outer.right-outer.left,outer.bottom-outer.top},fieldFill);
+     comboPopupFrame(h,dc);
      if(l&(4|8)){
       int x=origin.x-outer.left,y=origin.y-outer.top;
       OffsetViewportOrgEx(dc,x,y,nullptr);
@@ -489,7 +535,7 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
  // Native scrollbar input can paint synchronously during tracking; restore
  // our frame immediately after scroll, selection or nonclient input.
  if(m==0x47||m==0x18||m==0x115||m==0x20a||m==0xa0||m==0xa1||m==0xa2||
-    m==0x100||m==0x188||m==0x197||m==0x31a)refreshComboFrame(h);
+    m==0x100||m==0x188||m==0x197||m==0x31a||m==0x200||m==0x202)refreshComboFrame(h);
  return result;
 }
 static void installComboPopup(HWND combo){
