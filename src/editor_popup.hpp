@@ -105,12 +105,22 @@ static void layoutActionWindow(HWND h){
   total+=needs[i];
  }
  int available=maxn(actionVisibleColumns,r.right-2*margin-4-gap*(actionVisibleColumns-1));
+ // Once the measured content fits, give every column the same amount
+ // of extra space, independent of the width of its longest label.
+ // Keep the compact measured widths at the natural size. Only use
+ // proportional compression when the window is too narrow for the content.
+ const int surplus=available-total;
  int left=margin+2,remaining=available,remainingNeed=total;
  for(int i=0;i<3;i++){
   HWND col=actionColumns[i];
   if(i>=actionVisibleColumns){move(col,0,0,0,0,0x80|1|2);continue;}
-  int width=i==actionVisibleColumns-1?remaining:
+  int width;
+  if(surplus>=0){
+   width=needs[i]+surplus/actionVisibleColumns+(i<surplus%actionVisibleColumns?1:0);
+  }else{
+   width=i==actionVisibleColumns-1?remaining:
     clamp((int)((long long)remaining*needs[i]/maxn(1,remainingNeed)),1,maxn(1,remaining-(actionVisibleColumns-i-1)));
+  }
   move(col,left,top,width,listH,0x40);
   left+=width+gap;remaining-=width;remainingNeed-=needs[i];
  }
