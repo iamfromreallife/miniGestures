@@ -478,3 +478,68 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     return code;
 }
+
+
+// The notification area uses SystemUsesLightTheme, independently of app themes.
+extern "C" int WINAPI NativeTrayDark() {
+    DWORD light=1, size=sizeof(light);
+    const wchar_t* key=L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+    if(RegGetValueW(HKEY_CURRENT_USER,key,L"SystemUsesLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)!=ERROR_SUCCESS)
+        return 0;
+    return light==0;
+}
+
+// Generate and cache a contrasting tray-only icon from each existing resource.
+// DrawIconEx supplies premultiplied alpha; invert neutral tones within alpha,
+// preserving transparent edges and colored pause/update badges.
+extern "C" HICON WINAPI NativeInvertTrayIcon(HICON original) {
+    if(!original)return nullptr;
+    ICONINFO source{};
+    if(!GetIconInfo(original,&source))return nullptr;
+    HICON result=nullptr;
+    BITMAP bm{};
+    if(source.hbmColor && GetObjectW(source.hbmColor,sizeof(bm),&bm)==sizeof(bm) &&
+       bm.bmWidth>0 && bm.bmHeight>0 && bm.bmWidth<=256 && bm.bmHeight<=256) {
+        const int w=bm.bmWidth,h=bm.bmHeight;
+        BITMAPINFO info{};
+        info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth=w;info.bmiHeader.biHeight=-h;
+        info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
+        info.bmiHeader.biCompression=BI_RGB;
+        void* bits=nullptr;
+        HDC dc=CreateCompatibleDC(nullptr);
+        HBITMAP color=dc?CreateDIBSection(dc,&info,DIB_RGB_COLORS,&bits,nullptr,0):nullptr;
+        if(color&&bits){
+            HGDIOBJ old=SelectObject(dc,color);
+            if(old&&old!=HGDI_ERROR){
+                auto* pixels=static_cast<unsigned char*>(bits);
+                ZeroMemory(pixels,static_cast<size_t>(w)*h*4);
+                const BOOL drawn=DrawIconEx(dc,0,0,original,w,h,0,nullptr,DI_NORMAL);
+                GdiFlush();
+                SelectObject(dc,old);
+                if(drawn){
+                    bool hasAlpha=false;
+                    for(int i=0;i<w*h;++i){
+                        auto* p=pixels+i*4;const unsigned a=p[3];
+                        if(!a)continue;
+                        hasAlpha=true;
+                        unsigned hi=p[0],lo=p[0];
+                        for(int c=1;c<3;++c){if(p[c]>hi)hi=p[c];if(p[c]<lo)lo=p[c];}
+                        if((hi-lo)*255u<=a*24u)
+                            for(int c=0;c<3;++c)p[c]=static_cast<unsigned char>(a-(p[c]>a?a:p[c]));
+                    }
+                    if(hasAlpha){
+                        ICONINFO out=source;out.hbmColor=color;
+                        result=CreateIconIndirect(&out);
+                    }
+                }
+            }
+        }
+        if(color)DeleteObject(color);
+        if(dc)DeleteDC(dc);
+    }
+    if(source.hbmColor)DeleteObject(source.hbmColor);
+    if(source.hbmMask)DeleteObject(source.hbmMask);
+    return result;
+}
+extern "C" void WINAPI NativeReleaseTrayIcon(HICON icon){if(icon)DestroyIcon(icon);}
