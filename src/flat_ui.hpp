@@ -353,6 +353,7 @@ struct MGComboWindowPos{HWND hwnd,after;int x,y,cx,cy;UINT flags;};
 static_assert(sizeof(MGComboWindowPos)==40);
 static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
 static constexpr W comboOwnerProp[]=L"miniGestures.ComboPopupOwner";
+static constexpr W comboThemeProp[]=L"miniGestures.ComboPopupTheme";
 
 static void comboPopupClient(HWND list,HDC dest){
  if(!dest||!fieldBrush)return;
@@ -436,13 +437,18 @@ static void applyComboNativeTheme(HWND h){
  using Fn=long(CB*)(HWND,const W*,const W*);
  static H ux=LoadLibraryExW(L"uxtheme.dll",nullptr,0x800);
  static auto set=ux?(Fn)GetProcAddress(ux,"SetWindowTheme"):nullptr;
- if(set)set(h,darkTheme&&!highContrastTheme?L"DarkMode_Explorer":nullptr,nullptr);
+ // SetWindowTheme sends WM_THEMECHANGED and may force a paint. Do not
+ // reapply it on every keypress or click when the theme is unchanged.
+ bool dark=darkTheme&&!highContrastTheme;H marker=PTR(dark?2:1);
+ if(set&&GetPropW(h,comboThemeProp)!=marker){
+  if(set(h,dark?L"DarkMode_Explorer":nullptr,nullptr)>=0)SetPropW(h,comboThemeProp,marker);
+ }
 }
 static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
  PROC original=(PROC)GetPropW(h,comboProcProp);
  if(!original)return DefWindowProcW(h,m,w,l);
  if(m==0x82){ // WM_NCDESTROY: no stale HWND registrations.
-  RemovePropW(h,comboOwnerProp);RemovePropW(h,comboProcProp);
+  RemovePropW(h,comboThemeProp);RemovePropW(h,comboOwnerProp);RemovePropW(h,comboProcProp);
   SetWindowLongPtrW(h,-4,(ip)original);
   return CallWindowProcW(original,h,m,w,l);
  }
