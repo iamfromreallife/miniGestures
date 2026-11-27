@@ -24,7 +24,7 @@ set "CL="
 set "_CL_="
 set "LINK="
 set "_LINK_="
-echo Building miniGestures 2.0.24 (native C++ x64)...
+echo Building miniGestures 2.0.25 (native C++ x64)...
 cl.exe /nologo /c /std:c++17 /utf-8 /O2 /MT /EHsc /GS /guard:cf /W3 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /Fo"build\core.obj" "src\main.cpp"
 if errorlevel 1 goto fail
 cl.exe /nologo /c /std:c++17 /utf-8 /O2 /MT /EHsc /GS /guard:cf /W3 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /Fo"build\native_host.obj" "src\native_host.cpp"
