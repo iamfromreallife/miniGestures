@@ -75,7 +75,7 @@ A("","","","","","","",0,0),
 A("Kill app","Terminar aplicação","Forzar cierre de aplicación","Forcer l’arrêt de l’application","App zwangsweise beenden","Termina app forzatamente","",0,0),
 A("Go to Home","Ir para a página inicial","Ir a la página de inicio","Aller à la page d’accueil","Zur Startseite","Vai alla pagina iniziale","",0,0),
 A("Toggle hidden files","Alternar ficheiros ocultos","Alternar archivos ocultos","Afficher/masquer les fichiers cachés","Versteckte Dateien umschalten","Mostra/nascondi file nascosti","",0,0),
-A("Toggle hidden files including system protected","Alternar ficheiros ocultos e de sistema protegidos","Alternar archivos ocultos y de sistema protegidos","Fichiers cachés et système protégés","Versteckte und geschützte Systemdateien umschalten","Mostra/nascondi file nascosti e di sistema protetti","",0,0)};
+A("Toggle hidden files including protected","Alternar ficheiros ocultos e de sistema protegidos","Alternar archivos ocultos y de sistema protegidos","Fichiers cachés et système protégés","Versteckte und geschützte Systemdateien umschalten","Mostra/nascondi file nascosti e di sistema protetti","",0,0)};
 #undef A
 constexpr int ACTIONS=sizeof(defs)/sizeof(defs[0]);
 static_assert(ACTIONS==ACTION_COUNT,"Action IDs and persistence range must agree");
