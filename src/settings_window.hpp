@@ -34,6 +34,7 @@ static LR CB settingsControlProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h)
  if(face&&m==0x14)return 1;
  if(face&&m==0xf){PAINT p{};HDC dc=BeginPaint(h,&p);{SettingsPaintScope local(id);flatFace(h,dc,id);}EndPaint(h,&p);return 0;}
  if(face&&m==0x318){SettingsPaintScope local(id);flatFace(h,(HDC)w,id);return 0;}
+ if(flatCombo(id)&&m==0x134&&fieldBrush){SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;}
  LR result=CallWindowProcW(original,h,m,w,l);if(face&&(m==0x7||m==0x8||m==0xa||m==0xc||m==0x30||m==0x5||m==0x100||m==0x101||m==0x104||m==0x105||m==0xf1||m==0x14e||m==0x143||m==0x14b||m==0x14f||m==0x201||m==0x202||m==0x207||m==0x20a||m==0x215))InvalidateRect(h,nullptr,0);
  // Match the editor combo's synchronous focus repaint, including the
  // settings-specific font and DPI through its WM_PAINT handler.
@@ -50,6 +51,7 @@ static bool createSettingsControls(){for(int id:settingsRows){const W* cls=L"STA
  settingsControls[id]=CreateWindowExW(0,cls,L"",0x50000000|style,0,0,1,1,settingsWnd,PTR(id),inst,nullptr);if(!sc(id))return false;
  if(flatEdit(id))SendMessageW(sc(id),0xc5,id==TRAILCOLOR?7:id==GESTURETIMEOUT?5:(id==TRAILWIDTH||id==INDICATORSECONDS)?2:3,0);
  if(flatCheck(id)||flatCombo(id)||(style&15)==11)settingsOld[id]=(PROC)SetWindowLongPtrW(sc(id),-4,(ip)settingsControlProc);
+ if(flatCombo(id))installComboPopup(sc(id));
  }settingsFontRefresh();return settingsFont!=nullptr;}
 static void loadSettingsForm(){if(!settingsWnd)return;settingsLoading=true;SetWindowTextW(settingsWnd,et(GENERAL_TAB));
  for(int id:settingsRows){if(id==UPDATEBOX){SendMessageW(sc(id),0x14b,0,0);for(int j=1;j<=3;j++)SendMessageW(sc(id),0x143,0,(LP)updateText(j));}else if(id==LABUPDATE){st(id,updateText(9));}else if(id==UPDATEBTN||id==UPDATEVERSIONS){updateButton();}else if(flatCombo(id)){SendMessageW(sc(id),0x14b,0,0);int n=(int)SendMessageW(ctrl(id),0x146,0,0);for(int j=0;j<n;j++){W b[256]{};if(SendMessageW(ctrl(id),0x149,j,0)<256){SendMessageW(ctrl(id),0x148,j,(LP)b);SendMessageW(sc(id),0x143,0,(LP)b);}}}else if(id==CAPTUREBTN){refreshCaptureButton();}else if(id==REMOTEINPUTBOX){const W* const labels[]={L"Allow gestures from remote desktop software",L"Permitir gestos de software de ambiente de trabalho remoto",L"Permitir gestos de software de escritorio remoto",L"Autoriser les gestes depuis un logiciel de bureau à distance",L"Gesten von Remotedesktop-Software zulassen",L"Consenti gesti da software di desktop remoto"};st(id,labels[cfg.lang]);}else if(id==LABGESTURETIMEOUT){const W* const labels[]={L"Gesture timeout (ms, 0 = off)",L"Tempo limite do gesto (ms, 0 = desligado)",L"Tiempo límite del gesto (ms, 0 = no)",L"Délai du geste (ms, 0 = désactivé)",L"Gesten-Zeitlimit (ms, 0 = aus)",L"Tempo limite gesto (ms, 0 = off)"};st(id,labels[cfg.lang]);}else if(id==LABINDICATORSECONDS){const W* labels[]={L"Duration (s)",L"Duração (s)",L"Duración (s)",L"Durée (s)",L"Dauer (s)",L"Durata (s)"};st(id,labels[cfg.lang]);}else if(!flatEdit(id)){W b[512]{};get(id,b,512);st(id,b);}}

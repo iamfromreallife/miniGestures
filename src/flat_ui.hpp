@@ -111,6 +111,7 @@ static LR CB flatProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h);if(id<0||i
  if(m==0x18&&!w){flatHover[id]=false;flatDown[id]=false;}if(face&&m==0x14)return 1;
  if(face&&m==0xf){PAINT p{};HDC dc=BeginPaint(h,&p);flatFace(h,dc,id);EndPaint(h,&p);return 0;}
  if(face&&m==0x318){flatFace(h,(HDC)w,id);return 0;}
+ if(flatCombo(id)&&m==0x134&&fieldBrush){SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;}
  // Native processing still owns selections, notifications, focus, keyboard and popup.
  LR result=CallWindowProcW(orig,h,m,w,l);
  if(face&&(m==0x7||m==0x8||m==0xa||m==0xc||m==0x30||m==0x5||m==0x100||m==0x101||m==0x104||m==0x105||m==0xf1||m==0x14e||m==0x143||m==0x14b||m==0x14f||m==0x201||m==0x202||m==0x207||m==0x20a||m==0x215))InvalidateRect(h,nullptr,0);
@@ -119,7 +120,8 @@ static LR CB flatProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h);if(id<0||i
  if(flatCombo(id)&&(m==0x7||m==0x8))UpdateWindow(h);
  return result;
 }
-static void flatSubclass(int id){flatOld[id]=(PROC)SetWindowLongPtrW(ctrl(id),-4,(ip)flatProc);}
+static void installComboPopup(HWND combo);
+static void flatSubclass(int id){flatOld[id]=(PROC)SetWindowLongPtrW(ctrl(id),-4,(ip)flatProc);if(flatCombo(id))installComboPopup(ctrl(id));}
 #include "text_alignment.hpp"
 // Native edits keep their keyboard, IME, selection and clipboard behavior.
 // EM_GETRECT accounts for the control's own internal formatting offset.
@@ -234,7 +236,7 @@ static bool paintShapePreview(HDC dc,const P* sample,RECT r,DWORD color,DWORD bg
 static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD bg){
  return g.count>0&&paintShapePreview(dc,g.samples[0],r,color,bg,maxn(2,px(3)),maxn(1,px(1)));
 }
-static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::mix(fieldFill,RGB(0,120,212),darkTheme?20:12);}
+static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::blueHighlight(mgtheme::mix(fieldFill,RGB(0,120,212),darkTheme?20:12),darkTheme);}
 static DWORD rowSelectionText(bool hc){return hc?accentText:ink;}
 static void paintRowCore(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
  // The current client width is authoritative, even when Windows issues an
@@ -298,8 +300,8 @@ static void paintRow(DRAWITEM*d){
  // leaves it visibly blank until that animation returns to the message loop.
  // Restore the same buffered custom face immediately using the supplied DC.
  // Its native clip region is respected, and the padding matches WM_PAINT.
- if(d->state&0x1000u){
-  if(d->hwnd&&d->dc&&flatCombo(d->id))flatFace(d->hwnd,d->dc,d->id);
+ if((d->state&0x1000u)&&flatCombo(d->id)){
+  if(d->hwnd&&d->dc)flatFace(d->hwnd,d->dc,d->id);
   return;
  }
  // ODA_FOCUS alone changes no pixels in our combo style.
@@ -322,4 +324,107 @@ static void paintRow(DRAWITEM*d){
  BitBlt(d->dc,d->rect.left,d->rect.top,w,h,mem,0,0,0xcc0020);
  SelectObject(mem,old);
  if(cached)buttonBuffer.busy=false;else{DeleteObject(bmp);DeleteDC(mem);}
+}
+
+
+// A CBS_DROPDOWNLIST has a separate native ComboLBox popup. Buffering
+// WM_DRAWITEM alone does not cover the background or USER32's WM_PRINT
+// animation snapshots. Own those paint paths before the list is ever shown,
+// while leaving mouse tracking, selection, scrolling, accessibility and
+// keyboard navigation entirely to the native window procedure.
+struct MGComboInfo{DWORD cbSize;RECT item,button;DWORD state;HWND combo,edit,list;};
+static_assert(sizeof(MGComboInfo)==64);
+API B GetComboBoxInfo(HWND,MGComboInfo*);
+API H GetPropW(HWND,const W*);
+API B SetPropW(HWND,const W*,H);
+API H RemovePropW(HWND,const W*);
+API int SaveDC(HDC);
+API B RestoreDC(HDC,int);
+API B OffsetViewportOrgEx(HDC,int,int,POINT*);
+API int IntersectClipRect(HDC,int,int,int,int);
+static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
+static constexpr W comboOwnerProp[]=L"miniGestures.ComboPopupOwner";
+
+static void comboPopupClient(HWND list,HDC dest){
+ if(!dest||!fieldBrush)return;
+ RECT area{};if(!GetClientRect(list,&area)||area.right<=0||area.bottom<=0)return;
+ const int w=area.right,h=area.bottom;
+ bool cached=!buttonBuffer.busy&&(up)w*h<=131072&&buttonBuffer.ensure(dest,w,h);
+ HDC mem=cached?buttonBuffer.dc:CreateCompatibleDC(dest);
+ H bmp=cached?buttonBuffer.bmp:mem?CreateCompatibleBitmap(dest,w,h):nullptr;
+ H old=bmp?SelectObject(mem,bmp):nullptr;
+ bool buffered=old&&old!=PTR(-1);
+ if(cached&&buffered)buttonBuffer.busy=true;
+ HDC dc=buffered?mem:dest;
+ FillRect(dc,&area,fieldBrush);
+ HWND owner=(HWND)GetPropW(list,comboOwnerProp);
+ HFONT face=(HFONT)SendMessageW(list,0x31,0,0);
+ if(!face&&owner)face=(HFONT)SendMessageW(owner,0x31,0,0);
+ if(!face)face=font;
+ int scale=(int)GetDpiForWindow(list);if(scale<=0)scale=96;
+ auto unit=[&](int v){return (v*scale+48)/96;};
+ int top=(int)SendMessageW(list,0x18e,0,0); // LB_GETTOPINDEX
+ int count=(int)SendMessageW(list,0x18b,0,0); // LB_GETCOUNT
+ int current=(int)SendMessageW(list,0x188,0,0); // LB_GETCURSEL
+ if(top>=0&&count>0)for(int i=top;i<count;i++){
+  RECT r{};if(SendMessageW(list,0x198,i,(LP)&r)<0)break; // LB_GETITEMRECT
+  if(r.top>=h)break;if(r.bottom<=0)continue;
+  if(i==current){RECT q{r.left+unit(1),r.top+unit(1),r.right-unit(1),r.bottom-unit(1)};
+   DWORD bg=rowSelectionFill(highContrastTheme);rounded(dc,q,unit(4),bg,bg,false,fieldFill);}
+  W value[1024]{};LR n=SendMessageW(list,0x18a,i,0);
+  if(n>=0&&n<1024)SendMessageW(list,0x189,i,(LP)value);
+  RECT t=r;t.left+=unit(7);t.right-=unit(6);
+  if(t.right>t.left)textFlat(dc,value,t,i==current?rowSelectionText(highContrastTheme):ink,0x20|4|0x8000,face);
+ }
+ if(buffered){BitBlt(dest,0,0,w,h,mem,0,0,0xcc0020);SelectObject(mem,old);}
+ if(cached){buttonBuffer.busy=false;if(!buffered)buttonBuffer.clear();}
+ else{if(bmp)DeleteObject(bmp);if(mem)DeleteDC(mem);}
+}
+static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
+ PROC original=(PROC)GetPropW(h,comboProcProp);
+ if(!original)return DefWindowProcW(h,m,w,l);
+ if(m==0x82){ // WM_NCDESTROY: no stale HWND registrations.
+  RemovePropW(h,comboOwnerProp);RemovePropW(h,comboProcProp);
+  SetWindowLongPtrW(h,-4,(ip)original);
+  return CallWindowProcW(original,h,m,w,l);
+ }
+ if(fieldBrush){
+  if(m==0x14){ // WM_ERASEBKGND: never use the native white class brush.
+   RECT r{};GetClientRect(h,&r);if(w)FillRect((HDC)w,&r,fieldBrush);return 1;
+  }
+  if(m==0xf){ // WM_PAINT
+   if(w){comboPopupClient(h,(HDC)w);return 0;}
+   PAINT p{};HDC dc=BeginPaint(h,&p);comboPopupClient(h,dc);EndPaint(h,&p);return 0;
+  }
+  if(m==0x318){comboPopupClient(h,(HDC)w);return 0;} // WM_PRINTCLIENT
+  if(m==0x317&&w&&(l&4)){ // WM_PRINT with PRF_CLIENT: native animation capture
+   HDC dc=(HDC)w;RECT outer{},client{};POINT origin{};
+   if(GetWindowRect(h,&outer)&&GetClientRect(h,&client)&&ClientToScreen(h,&origin)){
+    int saved=SaveDC(dc);
+    if(saved){
+     // Initialize every pixel in the animation image, including the border.
+     RECT bounds{0,0,outer.right-outer.left,outer.bottom-outer.top};
+     fillSolid(dc,bounds,frame);
+     // Keep the native nonclient/scrollbar rendering, not its client erase.
+     if(l&2)CallWindowProcW(original,h,m,w,2);
+     int x=origin.x-outer.left,y=origin.y-outer.top;
+     OffsetViewportOrgEx(dc,x,y,nullptr);
+     IntersectClipRect(dc,0,0,client.right,client.bottom);
+     comboPopupClient(h,dc);RestoreDC(dc,saved);return 0;
+    }
+   }
+  }
+  if(m==0x134){SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;}
+ }
+ return CallWindowProcW(original,h,m,w,l);
+}
+static void installComboPopup(HWND combo){
+ if(!combo)return;MGComboInfo info{};info.cbSize=sizeof(info);
+ if(!GetComboBoxInfo(combo,&info)||!info.list||GetPropW(info.list,comboProcProp))return;
+ PROC old=(PROC)GetWindowLongPtrW(info.list,-4);if(!old)return;
+ if(!SetPropW(info.list,comboOwnerProp,combo))return;
+ if(!SetPropW(info.list,comboProcProp,(H)old)){RemovePropW(info.list,comboOwnerProp);return;}
+ if(!SetWindowLongPtrW(info.list,-4,(ip)comboPopupProc)){
+  RemovePropW(info.list,comboProcProp);RemovePropW(info.list,comboOwnerProp);
+ }
 }
