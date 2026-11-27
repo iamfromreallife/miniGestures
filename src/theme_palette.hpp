@@ -38,6 +38,23 @@ constexpr Color contrastInk(Color bg){
  unsigned l=luminance(bg)+50000;
  return 1ull*l*l>=50000ull*1050000ull?black:white;
 }
+// Preserve the preferred foreground whenever it is readable. For accent
+// controls prefer white on saturated/dark colors; pale accents use black.
+constexpr Color controlInk(Color bg,Color preferred,unsigned minimum=45){
+ return contrastAtLeast(bg,preferred,minimum)?preferred:contrastInk(bg);
+}
+constexpr Color accentControlInk(Color bg){
+ return controlInk(bg,rgb(255,255,255));
+}
+constexpr Color accentControlFill(Color bg,bool hover,bool pressed){
+ // Keep the text polarity stable while the button is hovered or pressed.
+ Color text=accentControlInk(bg),opposite=text==rgb(255,255,255)?rgb(0,0,0):rgb(255,255,255);
+ return mix(bg,opposite,pressed?14:hover?7:0);
+}
+static_assert(accentControlInk(gestureBlue)==rgb(255,255,255));
+static_assert(accentControlInk(rgb(255,255,0))==rgb(0,0,0));
+static_assert(contrastAtLeast(accentControlInk(accentControlFill(gestureBlue,true,false)),accentControlFill(gestureBlue,true,false),45));
+static_assert(contrastAtLeast(controlInk(rgb(42,42,42),rgb(80,80,80)),rgb(42,42,42),45));
 constexpr Color selectionHighlight(Color accent,Color field,bool dark){
  Color base=mix(accent,rgb(255,255,255),50);
  Color shade=mix(base,dark?rgb(0,0,0):rgb(255,255,255),dark?40:20);
@@ -61,10 +78,10 @@ constexpr bool same(const Palette&a,const Palette&b){return a.bg==b.bg&&a.field=
 // All inputs come from Windows. Derived states are used only when the visual
 // style does not expose a suitable color. Normal dark mode uses legacyDark.
 inline Palette systemPalette(Color face,Color window,Color text,Color gray,Color border,Color highlight,Color highlightText,bool dark,bool contrastMode){
- if(dark&&!contrastMode){Palette p=legacyDark;p.accent=highlight;p.accentText=contrastInk(highlight);p.selectedShape=selectionHighlight(highlight,p.field,true);return p;}
+ if(dark&&!contrastMode){Palette p=legacyDark;p.accent=highlight;p.accentText=accentControlInk(highlight);p.selectedShape=selectionHighlight(highlight,p.field,true);return p;}
  if(!contrastMode && (brightness(window)<128)!=dark){face=invert(face);window=invert(window);text=invert(text);gray=invert(gray);border=invert(border);}
  Palette p{face,window,text,gray,border,face,mix(face,text,7),mix(face,text,14),mix(window,highlight,12),mix(face,text,4),highlight,highlightText};
- if(!contrastMode){if(separation(p.bg,p.muted)<65)p.muted=mix(p.bg,p.ink,65);if(separation(p.field,p.frame)<35)p.frame=mix(p.field,p.ink,35);p.accent=highlight;p.accentText=contrastInk(highlight);p.selectedShape=selectionHighlight(highlight,p.field,dark);}
+ if(!contrastMode){if(separation(p.bg,p.muted)<65)p.muted=mix(p.bg,p.ink,65);if(separation(p.field,p.frame)<35)p.frame=mix(p.field,p.ink,35);p.accent=highlight;p.accentText=accentControlInk(highlight);p.selectedShape=selectionHighlight(highlight,p.field,dark);}
  else {p.hover=p.pressed=p.category=face;p.selectedShape=window;}
  // Override only the regular light-mode window background. Preserve Windows
  // control colors, the legacy dark palette and accessibility palettes.
