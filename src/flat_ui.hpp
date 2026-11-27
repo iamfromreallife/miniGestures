@@ -97,10 +97,10 @@ static void flatFace(HWND h,HDC dest,int id){RECT r{};GetClientRect(h,&r);if(r.r
  FillRect(dc,&r,white);bool enabled=IsWindowEnabled(h)!=0,focus=GetFocus()==h;DWORD color=enabled?ink:muted;
  if(flatCombo(id)){
   bool dropped=SendMessageW(h,0x157,0,0)!=0;DWORD bg=!enabled?buttonFill:dropped?pressedFill:flatHover[id]?hoverFill:buttonFill;
-  if(!highContrastTheme)color=mgtheme::controlInk(bg,color);rounded(dc,r,px(4),bg,focus||dropped?accent:frame);W value[512]{};int n=(int)SendMessageW(h,0x147,0,0);if(n>=0&&SendMessageW(h,0x149,n,0)<512)SendMessageW(h,0x148,n,(LP)value);
+  if(!highContrastTheme)color=mgtheme::controlInk(bg,color);rounded(dc,r,px(4),bg,highContrastTheme&&(focus||dropped)?accent:frame);W value[512]{};int n=(int)SendMessageW(h,0x147,0,0);if(n>=0&&SendMessageW(h,0x149,n,0)<512)SendMessageW(h,0x148,n,(LP)value);
   RECT t=r;t.left+=px(8);t.right-=px(28);textFlat(dc,value,t,color);int x=r.right-px(14),y=r.bottom/2;POINT a[]={{x-px(4),y-px(2)},{x,y+px(2)},{x+px(4),y-px(2)}};flatLine(dc,a,3,color,px(1));
  }else if(flatCheck(id)){
-  int size=px(15),y=(r.bottom-size)/2;RECT q{px(1),y,px(1)+size,y+size};bool on=SendMessageW(h,0xf0,0,0)==1;DWORD checkBg=on?accent:flatHover[id]?hoverFill:fieldFill;if(!highContrastTheme)color=mgtheme::controlInk(appFill,color);rounded(dc,q,px(3),checkBg,focus||on?accent:frame);
+  int size=px(15),y=(r.bottom-size)/2;RECT q{px(1),y,px(1)+size,y+size};bool on=SendMessageW(h,0xf0,0,0)==1;DWORD checkBg=on?accent:flatHover[id]?hoverFill:fieldFill;if(!highContrastTheme)color=mgtheme::controlInk(appFill,color);rounded(dc,q,px(3),checkBg,on||(highContrastTheme&&focus)?accent:frame);
   if(on){POINT tick[]={{q.left+px(3),q.top+px(7)},{q.left+px(6),q.top+px(10)},{q.left+px(12),q.top+px(4)}};flatLine(dc,tick,3,highContrastTheme?accentText:mgtheme::accentControlInk(checkBg),px(2));}
   W s[256];GetWindowTextW(h,s,256);RECT t=r;t.left=q.right+px(7);if(id==ADMINBOX){elevationIcon(dc,t.left,(r.bottom-px(14))/2,color);t.left+=px(adminIconInset);}textFlat(dc,s,t,color);
  }
@@ -259,7 +259,7 @@ static void paintRowCore(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
  }}if(t.right>t.left)textFlat(d->dc,b,t,rowFg);}
 static void paintRow(DRAWITEM*d);
 static void paintButtonCore(DRAWITEM*d){RECT r=d->rect;bool tab=d->id>=TAB0&&d->id<=TAB2;bool sel=tab&&d->id==TAB0+page;bool primary=d->id==SAVEBTN||d->id==132;bool down=(d->state&1)||flatDown[d->id],focus=(d->state&0x10)!=0;bool enabled=!(d->state&4);DWORD bg=primary?(highContrastTheme?accent:mgtheme::accentControlFill(accent,flatHover[d->id],down)):tab?((sel||flatHover[d->id])?hoverFill:appFill):down?pressedFill:flatHover[d->id]?hoverFill:buttonFill;
- FillRect(d->dc,&r,white);if(tab){RECT t=r;t.bottom-=px(3);if(sel||flatHover[d->id])rounded(d->dc,t,px(4),bg,bg,false);if(sel){RECT u=r;u.top=u.bottom-px(2);rounded(d->dc,u,px(1),accent,accent,false);}}else rounded(d->dc,r,px(4),bg,primary?bg:focus?accent:frame);
+ FillRect(d->dc,&r,white);if(tab){RECT t=r;t.bottom-=px(3);if(sel||flatHover[d->id])rounded(d->dc,t,px(4),bg,bg,false);if(sel){RECT u=r;u.top=u.bottom-px(2);rounded(d->dc,u,px(1),accent,accent,false);}}else rounded(d->dc,r,px(4),bg,primary?bg:highContrastTheme&&focus?accent:frame);
  W b[256];GetWindowTextW(d->hwnd,b,256);RECT t=r;t.left+=px(tab?6:4);t.right-=px(tab?6:4);HFONT face=sel&&tabBold?tabBold:font;H old=SelectObject(d->dc,face);POINT extent{};GetTextExtentPoint32W(d->dc,b,len(b),&extent);SelectObject(d->dc,old);
  DWORD tc=highContrastTheme?(primary?accentText:enabled?ink:muted):primary?mgtheme::accentControlInk(bg):mgtheme::controlInk(bg,enabled?ink:muted);
  if(extent.x>t.right-t.left&&t.bottom-t.top>=px(30)){RECT measure=t;measure.bottom=measure.top;H o=SelectObject(d->dc,face);DrawTextW(d->dc,b,-1,&measure,0x400|0x10|0x800|1);SelectObject(d->dc,o);int hh=measure.bottom-measure.top;if(hh<=t.bottom-t.top-px(2)){t.top+=(t.bottom-t.top-hh)/2;textFlat(d->dc,b,t,tc,1|0x10,face);return;}}
@@ -402,7 +402,7 @@ static void comboPopupFrame(HWND h,HDC dc){
  int x=origin.x-outer.left,y=origin.y-outer.top;
  int saved=SaveDC(dc);if(!saved)return;
  ExcludeClipRect(dc,x,y,x+client.right,y+client.bottom);
- fillSolid(dc,{0,0,w,ht},highContrastTheme?frame:accent);
+ fillSolid(dc,{0,0,w,ht},frame);
  MGScrollBarInfo sb{};sb.cbSize=sizeof(sb);
  // OBJID_VSCROLL = -5; the RECT is in screen coordinates.
  if(GetScrollBarInfo(h,-5,&sb)&&!(sb.state[0]&(0x8000u|0x10000u))){

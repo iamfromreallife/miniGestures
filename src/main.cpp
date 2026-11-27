@@ -517,7 +517,7 @@ static LR CB canvasproc(HWND h,UINT m,WP w,LP l){
     bool chosen=(shapeSelection&mgcards::bit(i))!=0;
     DWORD bg=chosen?rowSelectionFill(highContrastTheme):fieldFill;
     DWORD fg=highContrastTheme?(chosen?accentText:accent):mgtheme::gestureInk(bg);
-    rounded(b,q,maxn(1,px(4)),bg,chosen?accent:frame,true,fieldFill);
+    rounded(b,q,maxn(1,px(4)),bg,highContrastTheme&&chosen?accent:frame,true,fieldFill);
     int pad=maxn(2,px(5));RECT inner{q.left+pad,q.top+pad,q.right-pad,q.bottom-pad};
     if(grid.height>=px(42)&&grid.width>=px(30)){
      W index[16];number(index,i+1);RECT label{inner.left,q.bottom-px(16),inner.right,q.bottom-px(2)};
@@ -761,7 +761,7 @@ static void drawSearchIconAA(HDC dc,int left,int top,int size,DWORD fg,DWORD bg)
  }pixels[y*size+x]=rounded_aa::pixel(bg,fg,fg,hit,0);}
  return true;});
 }
-static void paintframes(HDC dc,const RECT& dirty){HWND focus=GetFocus();for(int i=0;i<164;i++){if(!ctrl(i)||!place[i].show||!flatFrame(i))continue;auto&p=place[i];RECT r{p.x,p.y,p.x+p.w,p.y+p.h};if(r.right<=dirty.left||r.left>=dirty.right||r.bottom<=dirty.top||r.top>=dirty.bottom)continue;rounded(dc,r,px(5),fieldFill,focus==ctrl(i)?accent:frame);if(i==SEARCHBOX||i==APPSEARCH){int size=px(13);int x=r.left+px(7),y=(r.top+r.bottom-size)/2;drawSearchIconAA(dc,x,y,size,muted,fieldFill);}}}
+static void paintframes(HDC dc,const RECT& dirty){HWND focus=GetFocus();for(int i=0;i<164;i++){if(!ctrl(i)||!place[i].show||!flatFrame(i))continue;auto&p=place[i];RECT r{p.x,p.y,p.x+p.w,p.y+p.h};if(r.right<=dirty.left||r.left>=dirty.right||r.bottom<=dirty.top||r.top>=dirty.bottom)continue;rounded(dc,r,px(5),fieldFill,highContrastTheme&&focus==ctrl(i)?accent:frame);if(i==SEARCHBOX||i==APPSEARCH){int size=px(13);int x=r.left+px(7),y=(r.top+r.bottom-size)/2;drawSearchIconAA(dc,x,y,size,muted,fieldFill);}}}
 // Exit is explicit, bounded, and only terminates our own process if shutdown stalls.
 static volatile long shutdownStarted=0;
 // Watchdog is already waiting before global hooks can ever be installed.
