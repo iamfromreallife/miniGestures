@@ -342,6 +342,27 @@ API B SetPropW(HWND,const W*,H);
 API H RemovePropW(HWND,const W*);
 static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
 static constexpr W comboThemeProp[]=L"miniGestures.ComboPopupTheme";
+static constexpr W comboBorderProp[]=L"miniGestures.ComboPopupBorderStyles";
+
+// Remove the native popup's border styles, not its painting. Keep the
+// native scrollbar, drop shadow, animations and hit testing untouched.
+// Save the original bits so Windows high-contrast mode can restore them.
+static void applyComboBorderStyle(HWND h){
+ if(IsWindowVisible(h))return; // never change the frame during scrolling
+ constexpr up border=0x00800000u; // WS_BORDER
+ constexpr up edges=0x00000200u|0x00020000u; // WS_EX_CLIENTEDGE, WS_EX_STATICEDGE
+ ip style=GetWindowLongPtrW(h,-16),ex=GetWindowLongPtrW(h,-20);
+ H marker=GetPropW(h,comboBorderProp);
+ up original=marker?(up)marker-1:((up)style&border)|((up)ex&edges);
+ if(!marker&&!SetPropW(h,comboBorderProp,PTR(original+1)))return;
+ ip nextStyle=(ip)(((up)style&~border)|(highContrastTheme?original&border:0));
+ ip nextEx=(ip)(((up)ex&~edges)|(highContrastTheme?original&edges:0));
+ if(nextStyle==style&&nextEx==ex)return;
+ if(nextStyle!=style)SetWindowLongPtrW(h,-16,nextStyle);
+ if(nextEx!=ex)SetWindowLongPtrW(h,-20,nextEx);
+ // SWP_FRAMECHANGED | NOMOVE | NOSIZE | NOZORDER | NOACTIVATE.
+ SetWindowPos(h,nullptr,0,0,0,0,0x20|1|2|4|16);
+}
 
 static void applyComboNativeTheme(HWND h){
  using Fn=long(CB*)(HWND,const W*,const W*);
@@ -359,7 +380,7 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
  PROC original=(PROC)GetPropW(h,comboProcProp);
  if(!original)return DefWindowProcW(h,m,w,l);
  if(m==0x82){ // WM_NCDESTROY
-  RemovePropW(h,comboThemeProp);RemovePropW(h,comboProcProp);
+  RemovePropW(h,comboBorderProp);RemovePropW(h,comboThemeProp);RemovePropW(h,comboProcProp);
   SetWindowLongPtrW(h,-4,(ip)original);
   return CallWindowProcW(original,h,m,w,l);
  }
@@ -378,11 +399,12 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
 static void installComboPopup(HWND combo){
  if(!combo)return;MGComboInfo info{};info.cbSize=sizeof(info);
  if(!GetComboBoxInfo(combo,&info)||!info.list)return;
- if(GetPropW(info.list,comboProcProp)){applyComboNativeTheme(info.list);return;}
+ if(GetPropW(info.list,comboProcProp)){applyComboNativeTheme(info.list);applyComboBorderStyle(info.list);return;}
  PROC old=(PROC)GetWindowLongPtrW(info.list,-4);if(!old)return;
  if(!SetPropW(info.list,comboProcProp,(H)old))return;
  if(!SetWindowLongPtrW(info.list,-4,(ip)comboPopupProc)){
   RemovePropW(info.list,comboProcProp);return;
  }
  applyComboNativeTheme(info.list);
+ applyComboBorderStyle(info.list);
 }
