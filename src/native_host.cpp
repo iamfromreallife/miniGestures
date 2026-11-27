@@ -543,3 +543,59 @@ extern "C" HICON WINAPI NativeInvertTrayIcon(HICON original) {
     return result;
 }
 extern "C" void WINAPI NativeReleaseTrayIcon(HICON icon){if(icon)DestroyIcon(icon);}
+
+
+// Toggle ordinary hidden files using the same shell setting and view-refresh
+// method as Hidden Files Hotkey. Executed by the action worker, never the hook
+// or editor UI thread. No Explorer restart, injected keys, or Windhawk runtime.
+namespace {
+SRWLOCK hiddenFilesLock=SRWLOCK_INIT;
+
+void refreshHiddenFileViews(){
+    Com<IShellWindows> windows;
+    if(FAILED(CoCreateInstance(CLSID_ShellWindows,nullptr,CLSCTX_LOCAL_SERVER,
+                              IID_PPV_ARGS(windows.out())))||!windows.p)return;
+    long count=0;
+    if(FAILED(windows->get_Count(&count)))return;
+    for(long i=0;i<count;++i){
+        VARIANT index{};index.vt=VT_I4;index.lVal=i;
+        Com<IDispatch> dispatch;
+        if(FAILED(windows->Item(index,dispatch.out()))||!dispatch.p)continue;
+        Com<IServiceProvider> provider;
+        if(FAILED(dispatch->QueryInterface(IID_PPV_ARGS(provider.out())))||!provider.p)continue;
+        Com<IShellBrowser> browser;
+        if(FAILED(provider->QueryService(SID_STopLevelBrowser,IID_PPV_ARGS(browser.out())))||!browser.p)continue;
+        Com<IShellView> view;
+        if(SUCCEEDED(browser->QueryActiveShellView(view.out()))&&view.p)view->Refresh();
+    }
+}
+
+BOOL CALLBACK refreshHiddenFileWindow(HWND window,LPARAM){
+    wchar_t name[64]{};
+    if(GetClassNameW(window,name,static_cast<int>(sizeof(name)/sizeof(name[0])))&&
+       (lstrcmpW(name,L"CabinetWClass")==0||lstrcmpW(name,L"ExploreWClass")==0))
+        PostMessageW(window,WM_COMMAND,41504,0);
+    return TRUE;
+}
+}
+
+extern "C" int WINAPI NativeToggleHiddenFiles(){
+    // Serialize the read/modify/write even when gestures run in parallel.
+    AcquireSRWLockExclusive(&hiddenFilesLock);
+    SHELLSTATE state{};
+    SHGetSetSettings(&state,SSF_SHOWALLOBJECTS,FALSE);
+    state.fShowAllObjects=!state.fShowAllObjects;
+    const bool show=state.fShowAllObjects!=0;
+    SHGetSetSettings(&state,SSF_SHOWALLOBJECTS,TRUE);
+    SHELLSTATE actual{};
+    SHGetSetSettings(&actual,SSF_SHOWALLOBJECTS,FALSE);
+    const bool applied=(actual.fShowAllObjects!=0)==show;
+    ReleaseSRWLockExclusive(&hiddenFilesLock);
+    // Refresh all currently open views. The asynchronous fallback covers
+    // windows not exposed by the COM enumeration.
+    SHChangeNotify(SHCNE_ASSOCCHANGED,SHCNF_IDLIST,nullptr,nullptr);
+    ComApartment apartment;
+    if(SUCCEEDED(apartment.hr)||apartment.hr==RPC_E_CHANGED_MODE)refreshHiddenFileViews();
+    EnumWindows(refreshHiddenFileWindow,0);
+    return applied?1:0;
+}

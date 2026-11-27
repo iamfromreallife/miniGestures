@@ -114,5 +114,12 @@ static bool json(){
  w.str(L"a\\b\"c\n\r\t\x0001");const char expected[]="\"a\\\\b\\\"c\\n\\r\\t \"";
  bool ok=w.ok&&w.n==(int)sizeof(expected)-1&&!memcmp(w.p,expected,sizeof(expected)-1);freep(w.p);return ok;
 }
-static bool run(){return normalization()&&regex()&&runtime()&&raster()&&trailGrowth()&&json();}
+// Test registration and runtime packing without changing Explorer settings.
+static bool hiddenFilesAction(){
+ Gesture g{};Act a{};a.type=TOGGLE_HIDDEN_FILES_ACTION;
+ if(commitAction(g,-1,a)!=0||g.steps!=1||actionGroup(a.type)!=1||retiredAction(a.type))return false;
+ RuntimeAction packed{};prepareAction(packed,g.actions[0]);
+ return packed.type==a.type&&defs[a.type].vk==0&&!*defs[a.type].hint&&*defs[a.type].name[0];
+}
+static bool run(){return normalization()&&regex()&&runtime()&&raster()&&trailGrowth()&&json()&&hiddenFilesAction();}
 }
