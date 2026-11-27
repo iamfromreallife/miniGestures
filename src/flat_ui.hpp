@@ -329,25 +329,27 @@ static void paintRow(DRAWITEM*d){
 }
 
 
-// The ComboLBox is a real USER32 listbox. Leave its scrolling, nonclient
-// frame, scrollbar, painting and animation snapshots to the native procedure.
-// The owner-draw notifications still use our buffered item renderer above.
-// The subclass supplies only the themed client background and native theme;
-// it never paints or forces a scrollbar redraw.
+// The ComboLBox is a real USER32 listbox. Native painting, scrolling,
+// scrollbar, and animation snapshots remain with the native procedure.
+// Owner-draw notifications use our buffered item renderer above.
+// Only the outermost one-pixel WS_BORDER is recolored after native frame
+// painting. No scrollbar, client-area, or mouse-tracking repaint is added.
 struct MGComboInfo{DWORD cbSize;RECT item,button;DWORD state;HWND combo,edit,list;};
 static_assert(sizeof(MGComboInfo)==64);
 API B GetComboBoxInfo(HWND,MGComboInfo*);
 API H GetPropW(HWND,const W*);
 API B SetPropW(HWND,const W*,H);
 API H RemovePropW(HWND,const W*);
+API HDC GetWindowDC(HWND);
+API int FrameRect(HDC,const RECT*,HBRUSH);
 static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
 static constexpr W comboThemeProp[]=L"miniGestures.ComboPopupTheme";
 static constexpr W comboBorderProp[]=L"miniGestures.ComboPopupBorderStyles";
 
 // Use a flat native WS_BORDER on all four sides. STATICEDGE is a 3D
 // edge and its light/shadow sides disappear against some backgrounds.
-// Request the neutral DWM border color, without overriding WM_NCPAINT.
-// Where DWM does not color ComboLBox frames, USER32 chooses the color.
+// Request the neutral DWM border color and keep the native border geometry.
+// The one-pixel outline below also covers USER32-painted popup frames.
 static void applyComboBorderStyle(HWND h){
  if(IsWindowVisible(h))return; // do not change the frame during scrolling
  constexpr up border=0x00800000u; // WS_BORDER
@@ -384,6 +386,16 @@ static void applyComboNativeTheme(HWND h){
    SetPropW(h,comboThemeProp,marker);
  }
 }
+// FrameRect draws only the four one-pixel outside edges. It does not touch
+// the list client, scrollbar, drop shadow, or native hit-testing geometry.
+static void recolorComboBorder(HWND h,HDC dc){
+ if(!dc||highContrastTheme||!(GetWindowLongPtrW(h,-16)&0x00800000u))return;
+ RECT bounds{};if(!GetWindowRect(h,&bounds))return;
+ RECT r{0,0,bounds.right-bounds.left,bounds.bottom-bounds.top};
+ if(r.right<2||r.bottom<2)return;
+ HBRUSH brush=CreateSolidBrush(RGB(0xAB,0xAD,0xB3));
+ if(brush){FrameRect(dc,&r,brush);DeleteObject(brush);}
+}
 static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
  PROC original=(PROC)GetPropW(h,comboProcProp);
  if(!original)return DefWindowProcW(h,m,w,l);
@@ -400,9 +412,18 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
    SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;
   }
  }
- // In particular, WM_PAINT, WM_NCPAINT, WM_PRINT/PRINTCLIENT, scroll
- // messages and native mouse tracking have exactly one renderer.
- return CallWindowProcW(original,h,m,w,l);
+ // Native code still paints everything first. Recolor only the outside
+ // border in the native nonclient paint and animation snapshot paths.
+ LR result=CallWindowProcW(original,h,m,w,l);
+ if(!highContrastTheme&&IsWindow(h)){
+  if(m==0x85||(m==0x86&&l!=-1)){ // WM_NCPAINT / WM_NCACTIVATE
+   HDC dc=GetWindowDC(h);
+   if(dc){recolorComboBorder(h,dc);ReleaseDC(h,dc);}
+  }else if(m==0x317&&w&&(l&2)){ // WM_PRINT with PRF_NONCLIENT
+   recolorComboBorder(h,(HDC)w);
+  }
+ }
+ return result;
 }
 static void installComboPopup(HWND combo){
  if(!combo)return;MGComboInfo info{};info.cbSize=sizeof(info);
