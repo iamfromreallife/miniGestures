@@ -3,13 +3,16 @@ namespace mgtheme {
 using Color=unsigned;
 constexpr unsigned rgb(unsigned r,unsigned g,unsigned b){return r|(g<<8)|(b<<16);}
 struct Palette{Color bg,field,ink,muted,frame,button,hover,pressed,selectedShape,category,accent,accentText;};
-constexpr Palette legacyDark{rgb(32,32,32),rgb(42,42,42),rgb(242,242,242),rgb(180,185,191),rgb(83,87,94),rgb(48,48,48),rgb(60,63,68),rgb(67,75,87),rgb(36,63,85),rgb(53,53,53),rgb(0,120,212),rgb(255,255,255)};
+constexpr Color uiAccent(bool dark){return dark?rgb(112,112,112):rgb(85,85,85);}
+constexpr Color selectionHighlight(bool dark){return dark?rgb(80,80,80):rgb(212,212,212);}
+constexpr Color gestureBlue=rgb(0,120,212);
+constexpr Palette legacyDark{rgb(32,32,32),rgb(42,42,42),rgb(242,242,242),rgb(180,185,191),rgb(83,83,83),rgb(48,48,48),rgb(63,63,63),rgb(75,75,75),selectionHighlight(true),rgb(53,53,53),uiAccent(true),rgb(255,255,255)};
 constexpr bool useDark(int mode,bool systemDark){return mode==2||(mode==0&&systemDark);}
 constexpr Color mix(Color a,Color b,unsigned percent){Color c=0;for(unsigned i=0;i<24;i+=8)c|=((((a>>i)&255)*(100-percent)+((b>>i)&255)*percent+50)/100)<<i;return c;}
-// Start from the 50%-lightened Save Changes blue, then adjust by theme.
-constexpr Color blueHighlight(bool dark){return mix(rgb(128,188,234),dark?rgb(0,0,0):rgb(255,255,255),dark?40:20);}
-static_assert(blueHighlight(false)==rgb(153,201,238));
-static_assert(blueHighlight(true)==rgb(77,113,140));
+// UI accent and gesture graphics deliberately use independent colors.
+static_assert(selectionHighlight(false)==rgb(212,212,212));
+static_assert(selectionHighlight(true)==rgb(80,80,80));
+static_assert(gestureBlue==rgb(0,120,212));
 constexpr unsigned brightness(Color c){return (299*(c&255)+587*((c>>8)&255)+114*((c>>16)&255))/1000;}
 constexpr unsigned separation(Color a,Color b){return brightness(a)>brightness(b)?brightness(a)-brightness(b):brightness(b)-brightness(a);}
 constexpr Color readable(Color bg,Color a,Color b){return separation(bg,a)>=separation(bg,b)?a:b;}
@@ -21,7 +24,7 @@ inline Palette systemPalette(Color face,Color window,Color text,Color gray,Color
  if(dark&&!contrastMode)return legacyDark;
  if(!contrastMode && (brightness(window)<128)!=dark){face=invert(face);window=invert(window);text=invert(text);gray=invert(gray);border=invert(border);}
  Palette p{face,window,text,gray,border,face,mix(face,text,7),mix(face,text,14),mix(window,highlight,12),mix(face,text,4),highlight,highlightText};
- if(!contrastMode){if(separation(p.bg,p.muted)<65)p.muted=mix(p.bg,p.ink,65);if(separation(p.field,p.frame)<35)p.frame=mix(p.field,p.ink,35);p.accentText=readable(highlight,text,window);}
+ if(!contrastMode){if(separation(p.bg,p.muted)<65)p.muted=mix(p.bg,p.ink,65);if(separation(p.field,p.frame)<35)p.frame=mix(p.field,p.ink,35);p.accent=uiAccent(dark);p.accentText=rgb(255,255,255);p.selectedShape=selectionHighlight(dark);}
  else {p.hover=p.pressed=p.category=face;p.selectedShape=window;}
  // Override only the regular light-mode window background. Preserve Windows
  // control colors, the legacy dark palette and accessibility palettes.
