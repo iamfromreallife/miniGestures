@@ -329,224 +329,60 @@ static void paintRow(DRAWITEM*d){
 }
 
 
-// A CBS_DROPDOWNLIST has a separate native ComboLBox popup. Buffering
-// WM_DRAWITEM alone does not cover the background or USER32's WM_PRINT
-// animation snapshots. Own those paint paths before the list is ever shown,
-// while leaving mouse tracking, selection, scrolling, accessibility and
-// keyboard navigation entirely to the native window procedure.
+// The ComboLBox is a real USER32 listbox. Leave its scrolling, nonclient
+// frame, scrollbar, painting and animation snapshots to the native procedure.
+// The owner-draw notifications still use our buffered item renderer above.
+// The subclass supplies only the themed client background and native theme;
+// it never paints or forces a scrollbar redraw.
 struct MGComboInfo{DWORD cbSize;RECT item,button;DWORD state;HWND combo,edit,list;};
 static_assert(sizeof(MGComboInfo)==64);
 API B GetComboBoxInfo(HWND,MGComboInfo*);
 API H GetPropW(HWND,const W*);
 API B SetPropW(HWND,const W*,H);
 API H RemovePropW(HWND,const W*);
-API int SaveDC(HDC);
-API B RestoreDC(HDC,int);
-API B OffsetViewportOrgEx(HDC,int,int,POINT*);
-API int IntersectClipRect(HDC,int,int,int,int);
-API int ExcludeClipRect(HDC,int,int,int,int);
-API HDC GetWindowDC(HWND);
-struct MGScrollBarInfo{DWORD cbSize;RECT rect;int lineButton,thumbTop,thumbBottom,reserved;DWORD state[6];};
-static_assert(sizeof(MGScrollBarInfo)==60);
-API B GetScrollBarInfo(HWND,long,MGScrollBarInfo*);
-struct MGComboWindowPos{HWND hwnd,after;int x,y,cx,cy;UINT flags;};
-static_assert(sizeof(MGComboWindowPos)==40);
 static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
-static constexpr W comboOwnerProp[]=L"miniGestures.ComboPopupOwner";
 static constexpr W comboThemeProp[]=L"miniGestures.ComboPopupTheme";
 
-static void comboPopupClient(HWND list,HDC dest){
- if(!dest||!fieldBrush)return;
- RECT area{};if(!GetClientRect(list,&area)||area.right<=0||area.bottom<=0)return;
- const int w=area.right,h=area.bottom;
- bool cached=!buttonBuffer.busy&&(up)w*h<=131072&&buttonBuffer.ensure(dest,w,h);
- HDC mem=cached?buttonBuffer.dc:CreateCompatibleDC(dest);
- H bmp=cached?buttonBuffer.bmp:mem?CreateCompatibleBitmap(dest,w,h):nullptr;
- H old=bmp?SelectObject(mem,bmp):nullptr;
- bool buffered=old&&old!=PTR(-1);
- if(cached&&buffered)buttonBuffer.busy=true;
- HDC dc=buffered?mem:dest;
- FillRect(dc,&area,fieldBrush);
- HWND owner=(HWND)GetPropW(list,comboOwnerProp);
- HFONT face=(HFONT)SendMessageW(list,0x31,0,0);
- if(!face&&owner)face=(HFONT)SendMessageW(owner,0x31,0,0);
- if(!face)face=font;
- int scale=(int)GetDpiForWindow(list);if(scale<=0)scale=96;
- auto unit=[&](int v){return (v*scale+48)/96;};
- int top=(int)SendMessageW(list,0x18e,0,0); // LB_GETTOPINDEX
- int count=(int)SendMessageW(list,0x18b,0,0); // LB_GETCOUNT
- int current=(int)SendMessageW(list,0x188,0,0); // LB_GETCURSEL
- if(top>=0&&count>0)for(int i=top;i<count;i++){
-  RECT r{};if(SendMessageW(list,0x198,i,(LP)&r)<0)break; // LB_GETITEMRECT
-  if(r.top>=h)break;if(r.bottom<=0)continue;
-  // Some native list rects retain the pre-scrollbar width. Clip the
-  // item to the actual current client bounds, not the drop rectangle.
-  r.left=maxn(0,r.left);r.right=minn(w,r.right);
-  if(r.right<=r.left)continue;
-  if(i==current){RECT q{r.left+unit(1),r.top+unit(1),r.right-unit(1),r.bottom-unit(1)};
-   DWORD bg=rowSelectionFill(highContrastTheme);rounded(dc,q,unit(4),bg,bg,false,fieldFill);}
-  W value[1024]{};LR n=SendMessageW(list,0x18a,i,0);
-  if(n>=0&&n<1024)SendMessageW(list,0x189,i,(LP)value);
-  RECT t=r;t.left+=unit(7);t.right-=unit(6);
-  if(t.right>t.left)textFlat(dc,value,t,i==current?rowSelectionText(highContrastTheme):ink,0x20|4|0x8000,face);
- }
- if(buffered){BitBlt(dest,0,0,w,h,mem,0,0,0xcc0020);SelectObject(mem,old);}
- if(cached){buttonBuffer.busy=false;if(!buffered)buttonBuffer.clear();}
- else{if(bmp)DeleteObject(bmp);if(mem)DeleteDC(mem);}
-}
-// The native scrollbar is nonclient area, outside WM_PAINT and the
-// owner-drawn rows. Paint the entire frame/scrollbar from our palette,
-// using USER32's actual scrollbar geometry so native hit-testing agrees.
-static void comboPopupFrameCore(HWND h,HDC dc){
- if(!dc||!fieldBrush)return;
- RECT outer{},client{};POINT origin{};
- if(!GetWindowRect(h,&outer)||!GetClientRect(h,&client)||!ClientToScreen(h,&origin))return;
- int w=outer.right-outer.left,ht=outer.bottom-outer.top;
- if(w<=0||ht<=0)return;
- int x=origin.x-outer.left,y=origin.y-outer.top;
- int saved=SaveDC(dc);if(!saved)return;
- ExcludeClipRect(dc,x,y,x+client.right,y+client.bottom);
- fillSolid(dc,{0,0,w,ht},frame);
- MGScrollBarInfo sb{};sb.cbSize=sizeof(sb);
- // OBJID_VSCROLL = -5; the RECT is in screen coordinates.
- if(GetScrollBarInfo(h,-5,&sb)&&!(sb.state[0]&(0x8000u|0x10000u))){
-  // Keep the native scrollbar inside the frame; never let its paint
-  // erase the outside edge, even if its reported rectangle overlaps it.
-  RECT r{maxn(1,sb.rect.left-outer.left),maxn(1,sb.rect.top-outer.top),
-         minn(w-1,sb.rect.right-outer.left),minn(ht-1,sb.rect.bottom-outer.top)};
-  if(r.right>r.left&&r.bottom>r.top){
-   DWORD track=highContrastTheme?fieldFill:mgtheme::mix(fieldFill,ink,5);
-   fillSolid(dc,r,track);
-   int scale=(int)GetDpiForWindow(h);if(scale<=0)scale=96;
-   int inset=maxn(2,(3*scale+48)/96),line=maxn(1,sb.lineButton);
-   int mid=r.left+(r.right-r.left)/2;
-   int top=clamp(r.top+sb.thumbTop,r.top,r.bottom),bottom=clamp(r.top+sb.thumbBottom,top,r.bottom);
-   if(bottom>top&&r.right-r.left>2*inset){
-    RECT thumb{r.left+inset,top,r.right-inset,bottom};
-    DWORD color=highContrastTheme?ink:mgtheme::mix(track,ink,(sb.state[3]&8)?65:45);
-    rounded(dc,thumb,maxn(1,inset),color,color,false,track);
-   }
-   int a=maxn(1,(3*scale+48)/96),upY=r.top+line/2,downY=r.bottom-line/2;
-   if(line>=2*a&&r.bottom-r.top>=2*line){
-    POINT u[]={{mid-a,upY+1},{mid,upY-a},{mid+a,upY+1}};
-    POINT d[]={{mid-a,downY-1},{mid,downY+a},{mid+a,downY-1}};
-    flatLine(dc,u,3,muted,1);flatLine(dc,d,3,muted,1);
-   }
-  }
- }
- // Explicit continuous outside edge. ExcludeClipRect above still
- // protects the list client, including any partially visible item.
- fillSolid(dc,{0,0,w,1},frame);
- fillSolid(dc,{0,ht-1,w,ht},frame);
- fillSolid(dc,{0,1,1,ht-1},frame);
- fillSolid(dc,{w-1,1,w,ht-1},frame);
- RestoreDC(dc,saved);
-}
-// Compose nonclient paint off-screen and transfer only its four bands.
-// Prevent a visible intermediate frame fill and protect client pixels
-// from scrollbar/border paint even during native mouse tracking.
-static void comboPopupFrame(HWND h,HDC dest){
- if(!dest||!fieldBrush)return;
- RECT outer{},client{};POINT origin{};
- if(!GetWindowRect(h,&outer)||!GetClientRect(h,&client)||!ClientToScreen(h,&origin))return;
- int w=outer.right-outer.left,ht=outer.bottom-outer.top;
- if(w<=0||ht<=0)return;
- int x=clamp(origin.x-outer.left,0,w),y=clamp(origin.y-outer.top,0,ht);
- int right=clamp(x+client.right,x,w),bottom=clamp(y+client.bottom,y,ht);
- bool cached=!buttonBuffer.busy&&(up)w*ht<=131072&&buttonBuffer.ensure(dest,w,ht);
- HDC mem=cached?buttonBuffer.dc:CreateCompatibleDC(dest);
- H bmp=cached?buttonBuffer.bmp:mem?CreateCompatibleBitmap(dest,w,ht):nullptr;
- H old=bmp?SelectObject(mem,bmp):nullptr;
- if(!old||old==PTR(-1)){
-  if(cached)buttonBuffer.clear();else{if(bmp)DeleteObject(bmp);if(mem)DeleteDC(mem);}
-  comboPopupFrameCore(h,dest);return;
- }
- if(cached)buttonBuffer.busy=true;
- fillSolid(mem,{0,0,w,ht},frame);
- comboPopupFrameCore(h,mem);
- auto band=[&](int left,int top,int width,int height){
-  if(width>0&&height>0)BitBlt(dest,left,top,width,height,mem,left,top,0xcc0020);
- };
- band(0,0,w,y);band(0,bottom,w,ht-bottom);
- band(0,y,x,bottom-y);band(right,y,w-right,bottom-y);
- SelectObject(mem,old);
- if(cached)buttonBuffer.busy=false;else{DeleteObject(bmp);DeleteDC(mem);}
-}
-static void refreshComboFrame(HWND h){
- if(!IsWindowVisible(h))return;
- HDC dc=GetWindowDC(h);if(dc){comboPopupFrame(h,dc);ReleaseDC(h,dc);}
-}
 static void applyComboNativeTheme(HWND h){
  using Fn=long(CB*)(HWND,const W*,const W*);
  static H ux=LoadLibraryExW(L"uxtheme.dll",nullptr,0x800);
  static auto set=ux?(Fn)GetProcAddress(ux,"SetWindowTheme"):nullptr;
- // SetWindowTheme sends WM_THEMECHANGED and may force a paint. Do not
- // reapply it on every keypress or click when the theme is unchanged.
- bool dark=darkTheme&&!highContrastTheme;H marker=PTR(dark?2:1);
+ // No theme reset or scrollbar invalidation during mouse tracking.
+ bool hc=highContrastTheme,dark=darkTheme&&!hc;
+ H marker=PTR(hc?3:dark?2:1);
  if(set&&GetPropW(h,comboThemeProp)!=marker){
-  if(set(h,dark?L"DarkMode_Explorer":nullptr,nullptr)>=0)SetPropW(h,comboThemeProp,marker);
+  if(set(h,hc?nullptr:dark?L"DarkMode_Explorer":L"Explorer",nullptr)>=0)
+   SetPropW(h,comboThemeProp,marker);
  }
 }
 static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
  PROC original=(PROC)GetPropW(h,comboProcProp);
  if(!original)return DefWindowProcW(h,m,w,l);
- if(m==0x82){ // WM_NCDESTROY: no stale HWND registrations.
-  RemovePropW(h,comboThemeProp);RemovePropW(h,comboOwnerProp);RemovePropW(h,comboProcProp);
+ if(m==0x82){ // WM_NCDESTROY
+  RemovePropW(h,comboThemeProp);RemovePropW(h,comboProcProp);
   SetWindowLongPtrW(h,-4,(ip)original);
   return CallWindowProcW(original,h,m,w,l);
  }
- if(fieldBrush){
-  // Never preserve old pixels when the native popup grows or is shown.
-  if(m==0x46&&l){auto* p=(MGComboWindowPos*)l;if((p->flags&0x40)||!(p->flags&1))p->flags|=0x100;}
-  if(m==0x85){HDC dc=GetWindowDC(h);if(dc){comboPopupFrame(h,dc);ReleaseDC(h,dc);return 0;}}
-  if(m==0x86){refreshComboFrame(h);return 1;}
-  if(m==0x14){ // WM_ERASEBKGND: never use the native white class brush.
-   // Even an explicit erase paints a complete buffered client, rather
-   // than exposing an intermediate blank surface in either theme.
-   if(w)comboPopupClient(h,(HDC)w);return 1;
+ if(fieldBrush&&w){
+  if(m==0x14){ // WM_ERASEBKGND: theme the client only.
+   RECT r{};if(GetClientRect(h,&r)){FillRect((HDC)w,&r,fieldBrush);return 1;}
   }
-  if(m==0xf){ // WM_PAINT
-   if(w){comboPopupClient(h,(HDC)w);return 0;}
-   PAINT p{};HDC dc=BeginPaint(h,&p);comboPopupClient(h,dc);EndPaint(h,&p);return 0;
+  if(m==0x134){ // WM_CTLCOLORLISTBOX
+   SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;
   }
-  if(m==0x318){comboPopupClient(h,(HDC)w);return 0;} // WM_PRINTCLIENT
-  if(m==0x317&&w&&(l&(2|4|8))){ // WM_PRINT: complete themed animation image
-   HDC dc=(HDC)w;RECT outer{},client{};POINT origin{};
-   if(GetWindowRect(h,&outer)&&GetClientRect(h,&client)&&ClientToScreen(h,&origin)){
-    int saved=SaveDC(dc);
-    if(saved){
-     // WM_PRINT is window-relative. Animation captures can omit
-     // PRF_NONCLIENT while still copying the full window bitmap.
-     if(l&(4|8))fillSolid(dc,{0,0,outer.right-outer.left,outer.bottom-outer.top},fieldFill);
-     comboPopupFrame(h,dc);
-     if(l&(4|8)){
-      int x=origin.x-outer.left,y=origin.y-outer.top;
-      OffsetViewportOrgEx(dc,x,y,nullptr);
-      IntersectClipRect(dc,0,0,client.right,client.bottom);
-      comboPopupClient(h,dc);
-     }
-     RestoreDC(dc,saved);return 0;
-    }
-   }
-  }
-  if(m==0x134){SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;}
  }
- LR result=CallWindowProcW(original,h,m,w,l);
- // Native scrollbar input can paint synchronously during tracking; restore
- // our frame immediately after scroll, selection or nonclient input.
- if(m==0x47||m==0x18||m==0x115||m==0x20a||m==0xa0||m==0xa1||m==0xa2||
-    m==0x100||m==0x188||m==0x197||m==0x31a||m==0x200||m==0x202)refreshComboFrame(h);
- return result;
+ // In particular, WM_PAINT, WM_NCPAINT, WM_PRINT/PRINTCLIENT, scroll
+ // messages and native mouse tracking have exactly one renderer.
+ return CallWindowProcW(original,h,m,w,l);
 }
 static void installComboPopup(HWND combo){
  if(!combo)return;MGComboInfo info{};info.cbSize=sizeof(info);
  if(!GetComboBoxInfo(combo,&info)||!info.list)return;
  if(GetPropW(info.list,comboProcProp)){applyComboNativeTheme(info.list);return;}
  PROC old=(PROC)GetWindowLongPtrW(info.list,-4);if(!old)return;
- if(!SetPropW(info.list,comboOwnerProp,combo))return;
- if(!SetPropW(info.list,comboProcProp,(H)old)){RemovePropW(info.list,comboOwnerProp);return;}
+ if(!SetPropW(info.list,comboProcProp,(H)old))return;
  if(!SetWindowLongPtrW(info.list,-4,(ip)comboPopupProc)){
-  RemovePropW(info.list,comboProcProp);RemovePropW(info.list,comboOwnerProp);return;
+  RemovePropW(info.list,comboProcProp);return;
  }
  applyComboNativeTheme(info.list);
 }
