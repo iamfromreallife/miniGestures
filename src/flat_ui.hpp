@@ -289,6 +289,10 @@ static void paintButton(DRAWITEM*d){
 // Keep normal list boxes and native combo input/navigation unchanged.
 static void paintRow(DRAWITEM*d){
  if(d->type!=3){paintRowCore(d);return;}
+ // ODS_COMBOBOXEDIT denotes the closed selection field, not a popup row.
+ // Its native inset differs from flatFace's padding. Never let a synchronous
+ // owner-draw notification overwrite part of the custom rounded face.
+ if(d->state&0x1000u){InvalidateRect(d->hwnd,nullptr,0);return;}
  // ODA_FOCUS alone changes no pixels in our combo style.
  if(d->action==4)return;
  const int w=d->rect.right-d->rect.left,h=d->rect.bottom-d->rect.top;
