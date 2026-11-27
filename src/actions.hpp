@@ -74,8 +74,8 @@ A("Go to last desktop","Ir para o último ambiente de trabalho","Ir al último e
 A("","","","","","","",0,0),
 A("Kill app","Terminar aplicação","Forzar cierre de aplicación","Forcer l’arrêt de l’application","App zwangsweise beenden","Termina app forzatamente","",0,0),
 A("Go to Home","Ir para a página inicial","Ir a la página de inicio","Aller à la page d’accueil","Zur Startseite","Vai alla pagina iniziale","",0,0),
-A("Toggle hidden files in Explorer","Alternar ficheiros ocultos no Explorador","Alternar archivos ocultos en el Explorador","Afficher/masquer les fichiers cachés dans l’Explorateur","Ausgeblendete Dateien im Explorer umschalten","Mostra/nascondi file nascosti in Esplora file","",0,0),
-A("Toggle hidden files in Explorer (including protected system files)","Alternar ficheiros ocultos no Explorador (incluindo ficheiros de sistema protegidos)","Alternar archivos ocultos en el Explorador (incluidos los archivos de sistema protegidos)","Afficher/masquer les fichiers cachés dans l’Explorateur (y compris les fichiers système protégés)","Ausgeblendete Dateien im Explorer umschalten (einschließlich geschützter Systemdateien)","Mostra/nascondi file nascosti in Esplora file (inclusi i file di sistema protetti)","",0,0)};
+A("Toggle hidden files","Alternar ficheiros ocultos","Alternar archivos ocultos","Afficher/masquer les fichiers cachés","Versteckte Dateien umschalten","Mostra/nascondi file nascosti","",0,0),
+A("Toggle hidden files including system protected","Alternar ficheiros ocultos e de sistema protegidos","Alternar archivos ocultos y de sistema protegidos","Fichiers cachés et système protégés","Versteckte und geschützte Systemdateien umschalten","Mostra/nascondi file nascosti e di sistema protetti","",0,0)};
 #undef A
 constexpr int ACTIONS=sizeof(defs)/sizeof(defs[0]);
 static_assert(ACTIONS==ACTION_COUNT,"Action IDs and persistence range must agree");
