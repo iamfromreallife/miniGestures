@@ -344,24 +344,32 @@ static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
 static constexpr W comboThemeProp[]=L"miniGestures.ComboPopupTheme";
 static constexpr W comboBorderProp[]=L"miniGestures.ComboPopupBorderStyles";
 
-// Remove the native popup's border styles, not its painting. Keep the
-// native scrollbar, drop shadow, animations and hit testing untouched.
-// Save the original bits so Windows high-contrast mode can restore them.
+// Use a native neutral static edge instead of the accent-colored WS_BORDER.
+// Ask Windows 11 DWM for the exact border color; older systems or popup
+// configurations without DWM border rendering keep the system static edge.
+// Never override WM_NCPAINT or draw a border ourselves.
 static void applyComboBorderStyle(HWND h){
- if(IsWindowVisible(h))return; // never change the frame during scrolling
+ if(IsWindowVisible(h))return; // do not change the frame during scrolling
  constexpr up border=0x00800000u; // WS_BORDER
- constexpr up edges=0x00000200u|0x00020000u; // WS_EX_CLIENTEDGE, WS_EX_STATICEDGE
+ constexpr up staticEdge=0x00020000u; // WS_EX_STATICEDGE
+ constexpr up edges=0x00000200u|staticEdge; // WS_EX_CLIENTEDGE / STATICEDGE
  ip style=GetWindowLongPtrW(h,-16),ex=GetWindowLongPtrW(h,-20);
  H marker=GetPropW(h,comboBorderProp);
  up original=marker?(up)marker-1:((up)style&border)|((up)ex&edges);
  if(!marker&&!SetPropW(h,comboBorderProp,PTR(original+1)))return;
  ip nextStyle=(ip)(((up)style&~border)|(highContrastTheme?original&border:0));
- ip nextEx=(ip)(((up)ex&~edges)|(highContrastTheme?original&edges:0));
- if(nextStyle==style&&nextEx==ex)return;
- if(nextStyle!=style)SetWindowLongPtrW(h,-16,nextStyle);
- if(nextEx!=ex)SetWindowLongPtrW(h,-20,nextEx);
- // SWP_FRAMECHANGED | NOMOVE | NOSIZE | NOZORDER | NOACTIVATE.
- SetWindowPos(h,nullptr,0,0,0,0,0x20|1|2|4|16);
+ ip nextEx=(ip)(((up)ex&~edges)|(highContrastTheme?original&edges:staticEdge));
+ if(nextStyle!=style||nextEx!=ex){
+  if(nextStyle!=style)SetWindowLongPtrW(h,-16,nextStyle);
+  if(nextEx!=ex)SetWindowLongPtrW(h,-20,nextEx);
+  SetWindowPos(h,nullptr,0,0,0,0,0x20|1|2|4|16); // SWP_FRAMECHANGED
+ }
+ // DWMWA_BORDER_COLOR: COLORREF (0x00BBGGRR), not HTML RGB order.
+ using Fn=long(CB*)(HWND,DWORD,const void*,DWORD);
+ static H dwm=LoadLibraryExW(L"dwmapi.dll",nullptr,0x800);
+ static auto set=dwm?(Fn)GetProcAddress(dwm,"DwmSetWindowAttribute"):nullptr;
+ DWORD color=highContrastTheme?0xffffffffu:RGB(0xAB,0xAD,0xB3);
+ if(set)set(h,34,&color,sizeof(color));
 }
 
 static void applyComboNativeTheme(HWND h){
