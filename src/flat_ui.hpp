@@ -238,8 +238,8 @@ static bool paintShapePreview(HDC dc,const P* sample,RECT r,DWORD color,DWORD bg
 static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD bg){
  return g.count>0&&paintShapePreview(dc,g.samples[0],r,color,bg,maxn(2,px(3)),maxn(1,px(1)));
 }
-static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::selectionHighlight(darkTheme);}
-static DWORD rowSelectionText(bool hc){return hc?accentText:darkTheme?RGB(255,255,255):RGB(32,32,32);}
+static DWORD rowSelectionFill(bool hc){return hc?accent:shapeFill;}
+static DWORD rowSelectionText(bool hc){return hc?accentText:mgtheme::contrastInk(rowSelectionFill(false));}
 static void paintRowCore(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
  // The current client width is authoritative, even when Windows issues an
  // owner-draw notification using a row rectangle from the previous size.
@@ -252,7 +252,7 @@ static void paintRowCore(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
  int right=r.right-maxn(1,px(6)),column=minn(px(26),maxn(0,right-r.left-px(2)));
  RECT preview{right-column,q.top,right,q.bottom};
  if(column>0&&preview.bottom>preview.top){
-  DWORD pfg=selected&&hc?accentText:g.enabled?(hc?accent:mgtheme::gestureBlue):muted;
+  DWORD pfg=hc?(selected?accentText:g.enabled?accent:muted):g.enabled?mgtheme::gestureInk(rowBg):mgtheme::gestureInk(rowBg,muted,30);
   t.right=minn(t.right,preview.left-px(3));
   paintGesturePreview(d->dc,g,preview,pfg,rowBg);
  }
@@ -261,7 +261,7 @@ static void paintRow(DRAWITEM*d);
 static void paintButtonCore(DRAWITEM*d){RECT r=d->rect;bool tab=d->id>=TAB0&&d->id<=TAB2;bool sel=tab&&d->id==TAB0+page;bool primary=d->id==SAVEBTN||d->id==132;bool down=(d->state&1)||flatDown[d->id],focus=(d->state&0x10)!=0;bool enabled=!(d->state&4);DWORD bg=primary?(down?mgtheme::mix(accent,highContrastTheme?accentText:RGB(0,0,0),14):flatHover[d->id]?mgtheme::mix(accent,accentText,7):accent):tab?((sel||flatHover[d->id])?hoverFill:appFill):down?pressedFill:flatHover[d->id]?hoverFill:buttonFill;
  FillRect(d->dc,&r,white);if(tab){RECT t=r;t.bottom-=px(3);if(sel||flatHover[d->id])rounded(d->dc,t,px(4),bg,bg,false);if(sel){RECT u=r;u.top=u.bottom-px(2);rounded(d->dc,u,px(1),accent,accent,false);}}else rounded(d->dc,r,px(4),bg,primary?bg:focus?accent:frame);
  W b[256];GetWindowTextW(d->hwnd,b,256);RECT t=r;t.left+=px(tab?6:4);t.right-=px(tab?6:4);HFONT face=sel&&tabBold?tabBold:font;H old=SelectObject(d->dc,face);POINT extent{};GetTextExtentPoint32W(d->dc,b,len(b),&extent);SelectObject(d->dc,old);
- DWORD tc=primary?accentText:enabled?ink:muted;
+ DWORD tc=primary?(highContrastTheme?accentText:mgtheme::contrastInk(bg)):enabled?ink:muted;
  if(extent.x>t.right-t.left&&t.bottom-t.top>=px(30)){RECT measure=t;measure.bottom=measure.top;H o=SelectObject(d->dc,face);DrawTextW(d->dc,b,-1,&measure,0x400|0x10|0x800|1);SelectObject(d->dc,o);int hh=measure.bottom-measure.top;if(hh<=t.bottom-t.top-px(2)){t.top+=(t.bottom-t.top-hh)/2;textFlat(d->dc,b,t,tc,1|0x10,face);return;}}
  // Anchor tab text at the same left inset for both font weights.
  textFlat(d->dc,b,t,tc,(tab?0:1)|4|0x20|0x8000,face);
