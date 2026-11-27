@@ -114,6 +114,9 @@ static LR CB flatProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h);if(id<0||i
  // Native processing still owns selections, notifications, focus, keyboard and popup.
  LR result=CallWindowProcW(orig,h,m,w,l);
  if(face&&(m==0x7||m==0x8||m==0xa||m==0xc||m==0x30||m==0x5||m==0x100||m==0x101||m==0x104||m==0x105||m==0xf1||m==0x14e||m==0x143||m==0x14b||m==0x14f||m==0x201||m==0x202||m==0x207||m==0x20a||m==0x215))InvalidateRect(h,nullptr,0);
+ // Focus is transferred inside native mouse processing, before the next
+ // dropdown animates. Finish the full face repaint now, not a queued paint.
+ if(flatCombo(id)&&(m==0x7||m==0x8))UpdateWindow(h);
  return result;
 }
 static void flatSubclass(int id){flatOld[id]=(PROC)SetWindowLongPtrW(ctrl(id),-4,(ip)flatProc);}
@@ -289,10 +292,16 @@ static void paintButton(DRAWITEM*d){
 // Keep normal list boxes and native combo input/navigation unchanged.
 static void paintRow(DRAWITEM*d){
  if(d->type!=3){paintRowCore(d);return;}
- // ODS_COMBOBOXEDIT denotes the closed selection field, not a popup row.
- // Its native inset differs from flatFace's padding. Never let a synchronous
- // owner-draw notification overwrite part of the custom rounded face.
- if(d->state&0x1000u){InvalidateRect(d->hwnd,nullptr,0);return;}
+ // ODS_COMBOBOXEDIT denotes the selection field, not a popup row.
+ // USER32 can clear this field synchronously during focus transfer, just
+ // before starting the next combo's drop animation. A deferred invalidation
+ // leaves it visibly blank until that animation returns to the message loop.
+ // Restore the same buffered custom face immediately using the supplied DC.
+ // Its native clip region is respected, and the padding matches WM_PAINT.
+ if(d->state&0x1000u){
+  if(d->hwnd&&d->dc&&flatCombo(d->id))flatFace(d->hwnd,d->dc,d->id);
+  return;
+ }
  // ODA_FOCUS alone changes no pixels in our combo style.
  if(d->action==4)return;
  const int w=d->rect.right-d->rect.left,h=d->rect.bottom-d->rect.top;

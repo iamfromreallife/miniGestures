@@ -34,7 +34,11 @@ static LR CB settingsControlProc(HWND h,UINT m,WP w,LP l){int id=GetDlgCtrlID(h)
  if(face&&m==0x14)return 1;
  if(face&&m==0xf){PAINT p{};HDC dc=BeginPaint(h,&p);{SettingsPaintScope local(id);flatFace(h,dc,id);}EndPaint(h,&p);return 0;}
  if(face&&m==0x318){SettingsPaintScope local(id);flatFace(h,(HDC)w,id);return 0;}
- LR result=CallWindowProcW(original,h,m,w,l);if(face&&(m==0x7||m==0x8||m==0xa||m==0xc||m==0x30||m==0x5||m==0x100||m==0x101||m==0x104||m==0x105||m==0xf1||m==0x14e||m==0x143||m==0x14b||m==0x14f||m==0x201||m==0x202||m==0x207||m==0x20a||m==0x215))InvalidateRect(h,nullptr,0);return result;
+ LR result=CallWindowProcW(original,h,m,w,l);if(face&&(m==0x7||m==0x8||m==0xa||m==0xc||m==0x30||m==0x5||m==0x100||m==0x101||m==0x104||m==0x105||m==0xf1||m==0x14e||m==0x143||m==0x14b||m==0x14f||m==0x201||m==0x202||m==0x207||m==0x20a||m==0x215))InvalidateRect(h,nullptr,0);
+ // Match the editor combo's synchronous focus repaint, including the
+ // settings-specific font and DPI through its WM_PAINT handler.
+ if(flatCombo(id)&&(m==0x7||m==0x8))UpdateWindow(h);
+ return result;
 }
 static void settingsFontRefresh(){HFONT f=CreateFontW(-spx(12),0,0,0,400,0,0,0,1,0,0,5,0,L"Segoe UI");if(!f)return;HFONT old=settingsFont;settingsFont=f;for(int id:settingsRows)if(sc(id)){SendMessageW(sc(id),0x30,(WP)f,1);if(flatCombo(id)){SendMessageW(sc(id),0x153,(WP)-1,spx(17));SendMessageW(sc(id),0x153,0,spx(21));}if(flatEdit(id))SendMessageW(sc(id),0xd3,3,(LP)(spx(3)|(spx(3)<<16)));}if(old)DeleteObject(old);}
 static void updateSettingsTheme(){if(!settingsWnd)return;themeCaption(settingsWnd);themeNative(settingsWnd);for(int id:settingsRows)if(sc(id)){themeNative(sc(id));InvalidateRect(sc(id),nullptr,1);}InvalidateRect(settingsWnd,nullptr,1);}
