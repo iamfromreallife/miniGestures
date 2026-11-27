@@ -55,7 +55,7 @@ static bool runtime(){
   if(snap->c.g[0].actions[0].key!=65||snap->c.g[0].actions[0].mods!=2)return false;
   RuntimeAction prepared{};Act program{};program.type=22;cp(program.arg,L"test.exe|--argument",256);prepareAction(prepared,program);if(prepared.separator!=8)return false;
   cp(c.g[0].folder,L"editor folder",96);c.a[0].uiOrder=7;cp(c.a[0].folder,L"editor folder",96);if(!sameRuntimeConfig(c,*snap))return false;
-  c.winx=200;c.winy=100;if(!sameRuntimeConfig(c,*snap))return false;
+  c.winx=200;c.winy=100;c.actionWindowWidth=720;c.actionWindowHeight=650;if(!sameRuntimeConfig(c,*snap))return false;
   ++c.g[0].actions[0].type;bool changed=!sameRuntimeConfig(c,*snap);--c.g[0].actions[0].type;if(!changed)return false;
   for(int pr=0;pr<3;pr++)for(int id=0;id<40;id++)if(blockedGlobal(c,pr,id)!=blockedGlobal(snap->c,pr,id))return false;
   Target t{};P points[N];memcpy(points,c.g[0].samples[0],sizeof(points));

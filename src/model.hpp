@@ -15,7 +15,7 @@ static inline bool hasTrigger(const Gesture&g){return g.hotkey>0||(g.trigger==0?
 struct Rule{int id,enabled,mode,inherit,uiOrder;W name[96],exe[260],cls[128],title[128],path[260],folder[96];};
 struct GlobalBlock{int profile,gesture;};
 struct Category{int profile,collapsed,uiOrder;W name[96];};
-struct ConfigScalars{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,disableFullscreenGestures,settingsX,settingsY,settingsPositionSaved,showGestureNames,indicatorX,indicatorY,indicatorPositionSaved,updateMode,updateLastCheck,indicatorSeconds,ignoredUpdateMajor,ignoredUpdateMinor,ignoredUpdatePatch,gestureTimeoutMs,nb,allowRemoteInput;};
+struct ConfigScalars{int version,lang,enabled,button,threshold,overlay,closeTray,startTray,nextid,ng,na,ne,winx,winy,winw,winh,maximized,sensitivity,nc,skipDeleteConfirm,layoutRevision,startWithWindows,adminWindows,theme,alwaysOnTop,trailColor,trailWidth,taskbarGestures,disableFullscreenGestures,settingsX,settingsY,settingsPositionSaved,showGestureNames,indicatorX,indicatorY,indicatorPositionSaved,updateMode,updateLastCheck,indicatorSeconds,ignoredUpdateMajor,ignoredUpdateMinor,ignoredUpdatePatch,gestureTimeoutMs,nb,allowRemoteInput,actionWindowWidth,actionWindowHeight;};
 // Heap-backed trivial records. Capacity grows geometrically; callers reserve
 // before changing counts. No allocations are made by the input hook.
 template<class T> struct Records{
@@ -158,7 +158,7 @@ static inline bool sameRuntimeRule(const Rule& a,const Rule& b){return !memcmp(&
 static inline bool sameRuntimeConfig(const Config& c,const Snapshot& s){
  const auto& r=s.c;if(c.ng!=r.ng||c.na!=r.na||c.ne!=r.ne||c.nb!=r.nb)return false;
  ConfigScalars a=c,b=r;
- a.winx=b.winx=0;a.winy=b.winy=0;a.winw=b.winw=0;a.winh=b.winh=0;a.maximized=b.maximized=0;
+ a.winx=b.winx=0;a.winy=b.winy=0;a.winw=b.winw=0;a.winh=b.winh=0;a.maximized=b.maximized=0;a.actionWindowWidth=b.actionWindowWidth=0;a.actionWindowHeight=b.actionWindowHeight=0;
  a.nc=b.nc=0;a.settingsX=b.settingsX=0;a.settingsY=b.settingsY=0;a.settingsPositionSaved=b.settingsPositionSaved=0;
  a.indicatorX=b.indicatorX=0;a.indicatorY=b.indicatorY=0;a.indicatorPositionSaved=b.indicatorPositionSaved=0;
  for(int i=0;i<c.ng;i++)if(!sameRuntimeGesture(c.g[i],r.g[i]))return false;
