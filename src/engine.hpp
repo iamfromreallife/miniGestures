@@ -11,7 +11,7 @@ static constexpr UINT MSG_METADATA=0x8008,MSG_ENGINE_READY=0x800a,MSG_REFRESH_HO
 static constexpr int MAX_PENDING_JOBS=64;static constexpr UINT MSG_REARM=0x800c;static volatile long mouseEvents=0,mouseExpected=0,keyboardExpected=0;
 // A single coalesced metadata update from a separate thread. The hook only reads its own copy.
 struct MetadataPair {Target cursor,foreground;DWORD tick;};
-struct CachedTarget{Target t;DWORD tick;};static constexpr int META_CACHE=32;static CachedTarget metadata[META_CACHE]{};static int metaNext=0;static DWORD ownPid;static DWORD lastTrailTick;
+struct CachedTarget{Target t;DWORD tick;};static constexpr int META_CACHE=32;static CachedTarget metadata[META_CACHE]{};static int metaNext=0;static DWORD ownPid;static W ownExecutable[520]{};static DWORD lastTrailTick;
 // Hook-owned copy of process metadata proactively collected by the worker.
 struct ProcessPath{DWORD pid,tick;int safety;W path[520];};
 static constexpr int WARM_LIMIT=96;static constexpr UINT MSG_WARM_METADATA=0x800e;
@@ -96,10 +96,52 @@ static bool clickTargetSafe(const Target&t,bool cachedOnly=false){if(t.pid==ownP
 }
 static bool isOwnEditorFrame(HWND h){W cls[64]{};return h&&GetClassNameW(h,cls,64)&&(eq(cls,L"miniGesturesMain")||(eq(cls,L"miniGesturesController")&&IsWindowVisible(h)));}
 static bool targetForHook(HWND h,Target& out,bool& deferred,const Snapshot* snap=nullptr,bool fastOnly=false){if(!snap)snap=live;deferred=false;out=identity(h);if(out.hwnd==overlaywnd&&overlaywnd)return false;if(!out.hwnd||!out.pid)return false;
- // Both modeless editors are legitimate targets. Keep modal dialogs and recording protected.
+ // All interactive miniGestures windows, including modal editors and
+ // system dialogs, participate in the same gesture routing as other apps.
+ // Never target a disabled owner, an invisible controller, or a recording
+ // surface while the user is explicitly teaching a gesture or shortcut.
  if(out.pid==ownPid){
-  if(recording||shapeRecording||!IsWindowEnabled(out.hwnd))return false;
-  if(!isOwnEditorFrame(out.hwnd)){W cls[64]{};if(!GetClassNameW(out.hwnd,cls,64)||!eq(cls,L"miniGesturesSettings"))return false;}
+  if(recording||shapeRecording||!IsWindowEnabled(out.hwnd)||!IsWindowVisible(out.hwnd))return false;
+  W cls[128]{};if(!GetClassNameW(out.hwnd,cls,128))return false;
+  if(eq(cls,L"miniGesturesTrail")||eq(cls,L"tooltips_class32"))return false;
+#ifdef _WIN32
+  // A ComboLBox is an implementation detail of its owning dialog, not
+  // an independent application window. Window gestures must not destroy
+  // or move the native dropdown itself.
+  if(eq(cls,L"ComboLBox")){
+   HWND owner=GetWindow(out.hwnd,4); // GW_OWNER
+   Target parent=identity(owner);
+   if(parent.hwnd&&parent.pid==ownPid&&parent.hwnd!=out.hwnd&&IsWindowEnabled(parent.hwnd)&&IsWindowVisible(parent.hwnd)){
+    out=parent;if(!GetClassNameW(out.hwnd,cls,128))return false;
+   }else return false;
+  }
+#endif
+  if(!snap->rules)return true;
+  // Never send WM_GETTEXT synchronously to our UI from the input hook:
+  // a modal dialog can be waiting for this same mouse message.
+  cp(out.exe,ownExecutable,520);cp(out.cls,cls,128);out.inputSafety=1;
+  DWORD now=GetTickCount();bool haveTitle=false;
+  for(auto& c:metadata)if(c.t.hwnd==out.hwnd&&c.t.pid==ownPid&&now-c.tick<=1000){
+   cp(out.title,c.t.title,256);haveTitle=true;break;
+  }
+  if(snap->pathRules&&!*out.exe){
+   if(metadataWake)SetEvent(metadataWake);
+   if(snap->exclusionRules)return false;deferred=true;return true;
+  }
+  if(!haveTitle){
+   // Preserve potentially matching title exclusions until the metadata
+   // thread has seen this window. Unrelated exclusions do not block it.
+   for(int i=0;i<snap->c.ne;i++){auto& r=snap->c.e[i];
+    if(r.enabled&&*r.title&&executableMatchesRule(r,out.exe)&&matchfield(out.cls,r.cls)){
+     if(metadataWake)SetEvent(metadataWake);return false;
+    }
+   }
+   for(int i=0;i<snap->c.na;i++){auto& r=snap->c.a[i];
+    if(r.enabled&&*r.title&&executableMatchesRule(r,out.exe)&&matchfield(out.cls,r.cls)){deferred=true;break;}
+   }
+   if(metadataWake)SetEvent(metadataWake);
+  }
+  return true;
  }
  if(!snap->rules)return true;
  DWORD now=GetTickCount();
@@ -360,7 +402,11 @@ static void configureHooks(){if(recording!=2)actionRecordCandidate=0;if(!live||s
  }
  InterlockedExchange(&mouseExpected,ok&&wantMouse?1:0);InterlockedExchange(&keyboardExpected,ok&&wantKey?1:0);InterlockedExchange(&hookok,ok?1:0);InterlockedExchange(&rulesActive,ok&&live->rules&&(wantMouse||wantKey)?1:0);if(metadataWake)SetEvent(metadataWake);
 }
-static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId();configureHooks();SetEvent(hookready);PostMessageW(controllerwnd,MSG_ENGINE_READY,0,0);
+static DWORD CB hookmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);live=initialSnapshot;initialSnapshot=nullptr;ownPid=GetCurrentProcessId(); 
+#ifdef _WIN32
+ DWORD ownLength=GetModuleFileNameW(nullptr,ownExecutable,520);if(!ownLength||ownLength>=520)ownExecutable[0]=0;
+#endif
+ configureHooks();SetEvent(hookready);PostMessageW(controllerwnd,MSG_ENGINE_READY,0,0);
  while(waitMessage(m)){if(m.message==MSG_CONFIG){Snapshot* next=(Snapshot*)m.lParam;Snapshot* old=live;live=next;releaseLater(old);long was=hookok;configureHooks();if(was!=hookok)PostMessageW(controllerwnd,MSG_ENGINE_READY,1,0);}
  else if(m.message==0x113&&!m.hwnd&&captureTimer&&m.wParam==captureTimer){if(!cap.s||cap.used)stopCaptureTimer();else expireCapture(GetTickCount());}
  else if(m.message==MSG_REPLAY_CLICK){replayQueuedClick(m.wParam,m.lParam);}
