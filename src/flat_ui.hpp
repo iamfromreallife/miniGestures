@@ -344,10 +344,10 @@ static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
 static constexpr W comboThemeProp[]=L"miniGestures.ComboPopupTheme";
 static constexpr W comboBorderProp[]=L"miniGestures.ComboPopupBorderStyles";
 
-// Use a native neutral static edge instead of the accent-colored WS_BORDER.
-// Ask Windows 11 DWM for the exact border color; older systems or popup
-// configurations without DWM border rendering keep the system static edge.
-// Never override WM_NCPAINT or draw a border ourselves.
+// Use a flat native WS_BORDER on all four sides. STATICEDGE is a 3D
+// edge and its light/shadow sides disappear against some backgrounds.
+// Request the neutral DWM border color, without overriding WM_NCPAINT.
+// Where DWM does not color ComboLBox frames, USER32 chooses the color.
 static void applyComboBorderStyle(HWND h){
  if(IsWindowVisible(h))return; // do not change the frame during scrolling
  constexpr up border=0x00800000u; // WS_BORDER
@@ -357,8 +357,8 @@ static void applyComboBorderStyle(HWND h){
  H marker=GetPropW(h,comboBorderProp);
  up original=marker?(up)marker-1:((up)style&border)|((up)ex&edges);
  if(!marker&&!SetPropW(h,comboBorderProp,PTR(original+1)))return;
- ip nextStyle=(ip)(((up)style&~border)|(highContrastTheme?original&border:0));
- ip nextEx=(ip)(((up)ex&~edges)|(highContrastTheme?original&edges:staticEdge));
+ ip nextStyle=(ip)(((up)style&~border)|(highContrastTheme?original&border:border));
+ ip nextEx=(ip)(((up)ex&~edges)|(highContrastTheme?original&edges:0));
  if(nextStyle!=style||nextEx!=ex){
   if(nextStyle!=style)SetWindowLongPtrW(h,-16,nextStyle);
   if(nextEx!=ex)SetWindowLongPtrW(h,-20,nextEx);
