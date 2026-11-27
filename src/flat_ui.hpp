@@ -238,8 +238,8 @@ static bool paintShapePreview(HDC dc,const P* sample,RECT r,DWORD color,DWORD bg
 static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD bg){
  return g.count>0&&paintShapePreview(dc,g.samples[0],r,color,bg,maxn(2,px(3)),maxn(1,px(1)));
 }
-static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::blueHighlight();}
-static DWORD rowSelectionText(bool hc){return hc?accentText:RGB(32,32,32);}
+static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::blueHighlight(darkTheme);}
+static DWORD rowSelectionText(bool hc){return hc?accentText:darkTheme?RGB(255,255,255):RGB(32,32,32);}
 static void paintRowCore(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
  // The current client width is authoritative, even when Windows issues an
  // owner-draw notification using a row rectangle from the previous size.

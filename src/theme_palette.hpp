@@ -6,9 +6,10 @@ struct Palette{Color bg,field,ink,muted,frame,button,hover,pressed,selectedShape
 constexpr Palette legacyDark{rgb(32,32,32),rgb(42,42,42),rgb(242,242,242),rgb(180,185,191),rgb(83,87,94),rgb(48,48,48),rgb(60,63,68),rgb(67,75,87),rgb(36,63,85),rgb(53,53,53),rgb(0,120,212),rgb(255,255,255)};
 constexpr bool useDark(int mode,bool systemDark){return mode==2||(mode==0&&systemDark);}
 constexpr Color mix(Color a,Color b,unsigned percent){Color c=0;for(unsigned i=0;i<24;i+=8)c|=((((a>>i)&255)*(100-percent)+((b>>i)&255)*percent+50)/100)<<i;return c;}
-// Match the primary Save Changes blue, blended 50% with white in both themes.
-constexpr Color blueHighlight(){return mix(rgb(0,120,212),rgb(255,255,255),50);}
-static_assert(blueHighlight()==rgb(128,188,234));
+// Start from the 50%-lightened Save Changes blue, then adjust by theme.
+constexpr Color blueHighlight(bool dark){return mix(rgb(128,188,234),dark?rgb(0,0,0):rgb(255,255,255),20);}
+static_assert(blueHighlight(false)==rgb(153,201,238));
+static_assert(blueHighlight(true)==rgb(102,150,187));
 constexpr unsigned brightness(Color c){return (299*(c&255)+587*((c>>8)&255)+114*((c>>16)&255))/1000;}
 constexpr unsigned separation(Color a,Color b){return brightness(a)>brightness(b)?brightness(a)-brightness(b):brightness(b)-brightness(a);}
 constexpr Color readable(Color bg,Color a,Color b){return separation(bg,a)>=separation(bg,b)?a:b;}
