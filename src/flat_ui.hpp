@@ -233,7 +233,7 @@ static bool paintGesturePreview(HDC dc,const Gesture&g,RECT r,DWORD color,DWORD 
 }
 static DWORD rowSelectionFill(bool hc){return hc?accent:mgtheme::mix(fieldFill,RGB(0,120,212),darkTheme?20:12);}
 static DWORD rowSelectionText(bool hc){return hc?accentText:ink;}
-static void paintRow(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
+static void paintRowCore(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
  // The current client width is authoritative, even when Windows issues an
  // owner-draw notification using a row rectangle from the previous size.
  if(listbox){RECT client{};if(GetClientRect(d->hwnd,&client)&&client.right>0){r.left=0;r.right=client.right;}}
@@ -250,6 +250,7 @@ static void paintRow(DRAWITEM*d){RECT r=d->rect;bool listbox=d->type==2;
   paintGesturePreview(d->dc,g,preview,pfg,rowBg);
  }
  }}if(t.right>t.left)textFlat(d->dc,b,t,rowFg);}
+static void paintRow(DRAWITEM*d);
 static void paintButtonCore(DRAWITEM*d){RECT r=d->rect;bool tab=d->id>=TAB0&&d->id<=TAB2;bool sel=tab&&d->id==TAB0+page;bool primary=d->id==SAVEBTN||d->id==132;bool down=(d->state&1)||flatDown[d->id],focus=(d->state&0x10)!=0;bool enabled=!(d->state&4);DWORD bg=primary?(down?(legacyDarkTheme?RGB(0,87,160):mgtheme::mix(accent,accentText,14)):flatHover[d->id]?(legacyDarkTheme?RGB(0,105,190):mgtheme::mix(accent,accentText,7)):accent):tab?((sel||flatHover[d->id])?hoverFill:appFill):down?pressedFill:flatHover[d->id]?hoverFill:buttonFill;
  FillRect(d->dc,&r,white);if(tab){RECT t=r;t.bottom-=px(3);if(sel||flatHover[d->id])rounded(d->dc,t,px(4),bg,bg,false);if(sel){RECT u=r;u.top=u.bottom-px(2);rounded(d->dc,u,px(1),accent,accent,false);}}else rounded(d->dc,r,px(4),bg,primary?bg:focus?accent:frame);
  W b[256];GetWindowTextW(d->hwnd,b,256);RECT t=r;t.left+=px(tab?6:4);t.right-=px(tab?6:4);HFONT face=sel&&tabBold?tabBold:font;H old=SelectObject(d->dc,face);POINT extent{};GetTextExtentPoint32W(d->dc,b,len(b),&extent);SelectObject(d->dc,old);
@@ -280,4 +281,32 @@ static void paintButton(DRAWITEM*d){
  DRAWITEM copy=*d;copy.dc=mem;copy.rect={0,0,w,h};paintButtonCore(&copy);
  BitBlt(d->dc,d->rect.left,d->rect.top,w,h,mem,0,0,0xcc0020);SelectObject(mem,old);
  if(useCache)buttonBuffer.busy=false;else{DeleteObject(bmp);DeleteDC(mem);}
+}
+
+// Native combo popup selection changes can call WM_DRAWITEM directly from
+// mouse tracking, outside WM_PAINT. Never expose the intermediate clear,
+// rounded selection background, or text to the screen in separate GDI calls.
+// Keep normal list boxes and native combo input/navigation unchanged.
+static void paintRow(DRAWITEM*d){
+ if(d->type!=3){paintRowCore(d);return;}
+ // ODA_FOCUS alone changes no pixels in our combo style.
+ if(d->action==4)return;
+ const int w=d->rect.right-d->rect.left,h=d->rect.bottom-d->rect.top;
+ if(w<=0||h<=0)return;
+ bool cached=!buttonBuffer.busy&&(up)w*h<=131072&&buttonBuffer.ensure(d->dc,w,h);
+ HDC mem=cached?buttonBuffer.dc:CreateCompatibleDC(d->dc);
+ H bmp=cached?buttonBuffer.bmp:mem?CreateCompatibleBitmap(d->dc,w,h):nullptr;
+ if(!bmp){if(mem&&!cached)DeleteDC(mem);paintRowCore(d);return;}
+ if(cached)buttonBuffer.busy=true;
+ H old=SelectObject(mem,bmp);
+ if(!old||old==PTR(-1)){
+  if(cached){buttonBuffer.busy=false;buttonBuffer.clear();}
+  else{DeleteObject(bmp);DeleteDC(mem);}
+  paintRowCore(d);return;
+ }
+ DRAWITEM copy=*d;copy.dc=mem;copy.rect={0,0,w,h};
+ paintRowCore(&copy);
+ BitBlt(d->dc,d->rect.left,d->rect.top,w,h,mem,0,0,0xcc0020);
+ SelectObject(mem,old);
+ if(cached)buttonBuffer.busy=false;else{DeleteObject(bmp);DeleteDC(mem);}
 }
