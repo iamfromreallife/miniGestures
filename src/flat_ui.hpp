@@ -344,6 +344,13 @@ API int SaveDC(HDC);
 API B RestoreDC(HDC,int);
 API B OffsetViewportOrgEx(HDC,int,int,POINT*);
 API int IntersectClipRect(HDC,int,int,int,int);
+API int ExcludeClipRect(HDC,int,int,int,int);
+API HDC GetWindowDC(HWND);
+struct MGScrollBarInfo{DWORD cbSize;RECT rect;int lineButton,thumbTop,thumbBottom,reserved;DWORD state[6];};
+static_assert(sizeof(MGScrollBarInfo)==60);
+API B GetScrollBarInfo(HWND,long,MGScrollBarInfo*);
+struct MGComboWindowPos{HWND hwnd,after;int x,y,cx,cy;UINT flags;};
+static_assert(sizeof(MGComboWindowPos)==40);
 static constexpr W comboProcProp[]=L"miniGestures.ComboPopupOriginal";
 static constexpr W comboOwnerProp[]=L"miniGestures.ComboPopupOwner";
 
@@ -382,6 +389,55 @@ static void comboPopupClient(HWND list,HDC dest){
  if(cached){buttonBuffer.busy=false;if(!buffered)buttonBuffer.clear();}
  else{if(bmp)DeleteObject(bmp);if(mem)DeleteDC(mem);}
 }
+// The native scrollbar is nonclient area, outside WM_PAINT and the
+// owner-drawn rows. Paint the entire frame/scrollbar from our palette,
+// using USER32's actual scrollbar geometry so native hit-testing agrees.
+static void comboPopupFrame(HWND h,HDC dc){
+ if(!dc||!fieldBrush)return;
+ RECT outer{},client{};POINT origin{};
+ if(!GetWindowRect(h,&outer)||!GetClientRect(h,&client)||!ClientToScreen(h,&origin))return;
+ int w=outer.right-outer.left,ht=outer.bottom-outer.top;
+ if(w<=0||ht<=0)return;
+ int x=origin.x-outer.left,y=origin.y-outer.top;
+ int saved=SaveDC(dc);if(!saved)return;
+ ExcludeClipRect(dc,x,y,x+client.right,y+client.bottom);
+ fillSolid(dc,{0,0,w,ht},highContrastTheme?frame:accent);
+ MGScrollBarInfo sb{};sb.cbSize=sizeof(sb);
+ // OBJID_VSCROLL = -5; the RECT is in screen coordinates.
+ if(GetScrollBarInfo(h,-5,&sb)&&!(sb.state[0]&(0x8000u|0x10000u))){
+  RECT r{sb.rect.left-outer.left,sb.rect.top-outer.top,sb.rect.right-outer.left,sb.rect.bottom-outer.top};
+  if(r.right>r.left&&r.bottom>r.top){
+   DWORD track=highContrastTheme?fieldFill:mgtheme::mix(fieldFill,ink,5);
+   fillSolid(dc,r,track);
+   int scale=(int)GetDpiForWindow(h);if(scale<=0)scale=96;
+   int inset=maxn(2,(3*scale+48)/96),line=maxn(1,sb.lineButton);
+   int mid=r.left+(r.right-r.left)/2;
+   int top=clamp(r.top+sb.thumbTop,r.top,r.bottom),bottom=clamp(r.top+sb.thumbBottom,top,r.bottom);
+   if(bottom>top&&r.right-r.left>2*inset){
+    RECT thumb{r.left+inset,top,r.right-inset,bottom};
+    DWORD color=highContrastTheme?ink:mgtheme::mix(track,ink,(sb.state[3]&8)?65:45);
+    rounded(dc,thumb,maxn(1,inset),color,color,false,track);
+   }
+   int a=maxn(1,(3*scale+48)/96),upY=r.top+line/2,downY=r.bottom-line/2;
+   if(line>=2*a&&r.bottom-r.top>=2*line){
+    POINT u[]={{mid-a,upY+1},{mid,upY-a},{mid+a,upY+1}};
+    POINT d[]={{mid-a,downY-1},{mid,downY+a},{mid+a,downY-1}};
+    flatLine(dc,u,3,muted,1);flatLine(dc,d,3,muted,1);
+   }
+  }
+ }
+ RestoreDC(dc,saved);
+}
+static void refreshComboFrame(HWND h){
+ if(!IsWindowVisible(h))return;
+ HDC dc=GetWindowDC(h);if(dc){comboPopupFrame(h,dc);ReleaseDC(h,dc);}
+}
+static void applyComboNativeTheme(HWND h){
+ using Fn=long(CB*)(HWND,const W*,const W*);
+ static H ux=LoadLibraryExW(L"uxtheme.dll",nullptr,0x800);
+ static auto set=ux?(Fn)GetProcAddress(ux,"SetWindowTheme"):nullptr;
+ if(set)set(h,darkTheme&&!highContrastTheme?L"DarkMode_Explorer":nullptr,nullptr);
+}
 static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
  PROC original=(PROC)GetPropW(h,comboProcProp);
  if(!original)return DefWindowProcW(h,m,w,l);
@@ -391,6 +447,10 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
   return CallWindowProcW(original,h,m,w,l);
  }
  if(fieldBrush){
+  // Never preserve old pixels when the native popup grows or is shown.
+  if(m==0x46&&l){auto* p=(MGComboWindowPos*)l;if((p->flags&0x40)||!(p->flags&1))p->flags|=0x100;}
+  if(m==0x85){HDC dc=GetWindowDC(h);if(dc){comboPopupFrame(h,dc);ReleaseDC(h,dc);return 0;}}
+  if(m==0x86){refreshComboFrame(h);return 1;}
   if(m==0x14){ // WM_ERASEBKGND: never use the native white class brush.
    // Even an explicit erase paints a complete buffered client, rather
    // than exposing an intermediate blank surface in either theme.
@@ -401,34 +461,40 @@ static LR CB comboPopupProc(HWND h,UINT m,WP w,LP l){
    PAINT p{};HDC dc=BeginPaint(h,&p);comboPopupClient(h,dc);EndPaint(h,&p);return 0;
   }
   if(m==0x318){comboPopupClient(h,(HDC)w);return 0;} // WM_PRINTCLIENT
-  if(m==0x317&&w&&(l&4)){ // WM_PRINT with PRF_CLIENT: native animation capture
+  if(m==0x317&&w&&(l&(2|4|8))){ // WM_PRINT: complete themed animation image
    HDC dc=(HDC)w;RECT outer{},client{};POINT origin{};
    if(GetWindowRect(h,&outer)&&GetClientRect(h,&client)&&ClientToScreen(h,&origin)){
     int saved=SaveDC(dc);
     if(saved){
-     // Initialize every pixel in the animation image, including the border.
-     RECT bounds{0,0,outer.right-outer.left,outer.bottom-outer.top};
-     fillSolid(dc,bounds,frame);
-     // Keep the native nonclient/scrollbar rendering, not its client erase.
-     if(l&2){int nc=SaveDC(dc);if(nc){CallWindowProcW(original,h,m,w,2);RestoreDC(dc,nc);}}
-     int x=origin.x-outer.left,y=origin.y-outer.top;
-     OffsetViewportOrgEx(dc,x,y,nullptr);
-     IntersectClipRect(dc,0,0,client.right,client.bottom);
-     comboPopupClient(h,dc);RestoreDC(dc,saved);return 0;
+     if(l&2)comboPopupFrame(h,dc); // no native white nonclient snapshot
+     if(l&(4|8)){
+      int x=origin.x-outer.left,y=origin.y-outer.top;
+      OffsetViewportOrgEx(dc,x,y,nullptr);
+      IntersectClipRect(dc,0,0,client.right,client.bottom);
+      comboPopupClient(h,dc);
+     }
+     RestoreDC(dc,saved);return 0;
     }
    }
   }
   if(m==0x134){SetTextColor((HDC)w,ink);SetBkColor((HDC)w,fieldFill);return (LR)fieldBrush;}
  }
- return CallWindowProcW(original,h,m,w,l);
+ LR result=CallWindowProcW(original,h,m,w,l);
+ // Native scrollbar input can paint synchronously during tracking; restore
+ // our frame immediately after scroll, selection or nonclient input.
+ if(m==0x47||m==0x18||m==0x115||m==0x20a||m==0xa0||m==0xa1||m==0xa2||
+    m==0x100||m==0x188||m==0x197||m==0x31a)refreshComboFrame(h);
+ return result;
 }
 static void installComboPopup(HWND combo){
  if(!combo)return;MGComboInfo info{};info.cbSize=sizeof(info);
- if(!GetComboBoxInfo(combo,&info)||!info.list||GetPropW(info.list,comboProcProp))return;
+ if(!GetComboBoxInfo(combo,&info)||!info.list)return;
+ if(GetPropW(info.list,comboProcProp)){applyComboNativeTheme(info.list);return;}
  PROC old=(PROC)GetWindowLongPtrW(info.list,-4);if(!old)return;
  if(!SetPropW(info.list,comboOwnerProp,combo))return;
  if(!SetPropW(info.list,comboProcProp,(H)old)){RemovePropW(info.list,comboOwnerProp);return;}
  if(!SetWindowLongPtrW(info.list,-4,(ip)comboPopupProc)){
-  RemovePropW(info.list,comboProcProp);RemovePropW(info.list,comboOwnerProp);
+  RemovePropW(info.list,comboProcProp);RemovePropW(info.list,comboOwnerProp);return;
  }
+ applyComboNativeTheme(info.list);
 }
