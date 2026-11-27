@@ -54,31 +54,7 @@ try {
  $headers=@{'User-Agent'='miniGestures-Updater'; 'Accept'='application/vnd.github+json'}
  $r=Invoke-RestMethod -Uri 'https://api.github.com/repos/iamfromreallife/miniGestures/releases/latest' -Headers $headers -TimeoutSec 25
  if($r.draft -or $r.prerelease){throw 'Not a stable release'}
- if($r.tag_name -cmatch '^v?(\d{1,5}\.\d{1,5}(?:\.\d{1,5})?)(?:[_-][A-Za-z0-9._-]{1,80})?else{throw 'Invalid stable release tag'}; $installed=[Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
- [IO.File]::WriteAllText((Join-Path $stage 'latest.version'),$v.ToString(),[Text.Encoding]::ASCII)
- $current=[version]::new($installed.FileMajorPart,$installed.FileMinorPart,$installed.FileBuildPart)
- if($v -le $current){exit 10}
- $body=[string]$r.body
- if($body.Length -gt 60000){$body=$body.Substring(0,60000)+"`r`n[Release notes truncated]"}
- [IO.File]::WriteAllText((Join-Path $stage 'release.notes'),$body,[Text.UTF8Encoding]::new($false))
- exit 0
-} catch {try{[IO.File]::WriteAllText((Join-Path $stage 'update.error'),$_.Exception.Message,[Text.UTF8Encoding]::new($false))}catch{};exit 11}
-)PS";
- worker=launch(script);if(!worker){error=L"Could not start Windows PowerShell.";clean();return false;}started=GetTickCount64();return true;
-}
-// 0 pending, 1 newer release, 2 up to date, 3 error.
-static int poll(){
- if(!worker)return 3;
- DWORD wait=WaitForSingleObject(worker,0);
- if(wait==WAIT_TIMEOUT){if(GetTickCount64()-started<45000)return 0;TerminateProcess(worker,11);WaitForSingleObject(worker,5000);error=L"Update request timed out.";}
- DWORD code=11;if(wait==WAIT_OBJECT_0)GetExitCodeProcess(worker,&code);CloseHandle(worker);worker=nullptr;
- if(code==0||code==10){readLatest();if(!latest[0]){error=L"Missing or invalid release version.";code=11;}else if(code==0){notes=readText(L"release.notes");}else notes.clear();}
- if(code!=0&&code!=10&&error.empty()){error=readText(L"update.error");if(error.empty())error=L"PowerShell worker exit code: "+std::to_wstring(code);}
- clean();return code==0?1:code==10?2:3;
-}
-static void cancel(){if(worker){TerminateProcess(worker,11);WaitForSingleObject(worker,5000);CloseHandle(worker);worker=nullptr;}clean();}
-}
-){$v=[version]$Matches[1];if($v.Build -lt 0){$v=[version]::new($v.Major,$v.Minor,0)}}else{throw 'Invalid stable release tag'}; $installed=[Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
+ if($r.tag_name -cmatch '^v?(\d{1,5}\.\d{1,5}(?:\.\d{1,5})?)(?:[_-][A-Za-z0-9._-]{1,80})?$'){$v=[version]$Matches[1];if($v.Build -lt 0){$v=[version]::new($v.Major,$v.Minor,0)}}else{throw 'Invalid stable release tag'}; $installed=[Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
  [IO.File]::WriteAllText((Join-Path $stage 'latest.version'),$v.ToString(),[Text.Encoding]::ASCII)
  $current=[version]::new($installed.FileMajorPart,$installed.FileMinorPart,$installed.FileBuildPart)
  if($v -le $current){exit 10}
