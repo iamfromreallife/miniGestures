@@ -126,5 +126,32 @@ static bool hiddenFilesAction(){
  }
  return g.steps==2;
 }
-static bool run(){return normalization()&&regex()&&runtime()&&raster()&&trailGrowth()&&json()&&hiddenFilesAction();}
+// A near local match must beat an exact inherited global shape, including
+// when diagnostic comparison is enabled. Global fallback, explicit blocks,
+// disabled inheritance and unmatched applications retain their semantics.
+static bool localGesturePriority(){
+ Config c;c.enabled=1;c.button=2;c.sensitivity=75;c.ng=2;c.na=1;
+ if(!c.g.reserve(2)||!c.a.reserve(1)||!c.blocks.reserve(1))return false;
+ c.a[0]={};c.a[0].id=1;c.a[0].enabled=c.a[0].inherit=1;cp(c.a[0].exe,L"brave.exe",260);
+ initgesture(c.g[0],10,0);initgesture(c.g[1],20,1);
+ P upShape[]={{0,100},{0,0}},slanted[]={{0,100},{10,0}},opposite[]={{0,0},{0,100}};
+ for(int i=0;i<2;++i){c.g[i].count=1;c.g[i].actions[0].type=i?10:2;}
+ if(!normalize(upShape,2,c.g[0].samples[0])||!normalize(slanted,2,c.g[1].samples[0]))return false;
+ auto check=[&](const W* exe,int expected,bool compareScores=false){
+  auto* snap=buildSnapshot(c);if(!snap)return false;
+  Job j{};j.s=snap;j.button=2;j.p=upShape;j.n=2;cp(j.t.exe,exe,520);
+  int q=0,qd=0;MatchTrace trace{};
+  int a=choose(j,q),b=choose(j,qd,nullptr,nullptr,nullptr,&trace);
+  auto* index=snap->index;snap->index=nullptr;int plain=choose(j,q);snap->index=index;
+  bool ok=a==expected&&b==expected&&plain==expected&&q==qd;
+  if(compareScores)ok=ok&&trace.profileId==1&&trace.localId==20&&trace.globalId==10&&trace.localScore>=75&&trace.localScore<trace.globalScore&&trace.globalScore==100;
+  release(snap);return ok;
+ };
+ if(!check(L"brave.exe",1,true)||!check(L"other.exe",0))return false;
+ if(!normalize(opposite,2,c.g[1].samples[0])||!check(L"brave.exe",0))return false;
+ c.nb=1;c.blocks[0]={1,10};if(!check(L"brave.exe",-1))return false;
+ c.nb=0;c.a[0].inherit=0;if(!check(L"brave.exe",-1))return false;
+ return normalize(slanted,2,c.g[1].samples[0])&&check(L"brave.exe",1);
+}
+static bool run(){return normalization()&&regex()&&runtime()&&raster()&&trailGrowth()&&json()&&hiddenFilesAction()&&localGesturePriority();}
 }

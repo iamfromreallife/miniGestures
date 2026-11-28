@@ -440,7 +440,48 @@ static bool executeSteps(const RuntimeGesture&g,const Target&t){if(!g.parallel){
  for(int i=0;i<g.steps;i++){b->steps[i].batch=b;b->steps[i].a=g.actions[i];InterlockedIncrement(&b->refs);threads[i]=CreateThread(nullptr,0,parallelStep,&b->steps[i],0,nullptr);if(!threads[i]){releaseBatch(b);ok=false;}}
  SetEvent(b->gate);for(int i=0;i<g.steps;i++)if(threads[i]){H wait[]={engineStop,threads[i]};DWORD r=WaitForMultipleObjects(2,wait,0,0xffffffff);if(r!=1||!b->steps[i].ok)ok=false;CloseHandle(threads[i]);}releaseBatch(b);return ok;}
 static DWORD CB actionmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);SetEvent(actionready);while(waitMessage(m)){if(m.message!=MSG_EXECUTE)continue;Job*j=(Job*)m.lParam;auto&g=j->s->c.g[j->selectedIndex];InterlockedExchange(&actionStarted,1);MG_LOG("dispatch begin job target child pid gestureID score steps parallel",(up)j,(up)j->t.hwnd,(up)j->t.child,j->t.pid,g.id,j->quality,g.steps,g.parallel);bool ok=running&&executeSteps(g,j->t);MG_LOG("dispatch end job success",(up)j,ok);Result*r=(Result*)alloc(sizeof(Result));if(r){r->ok=ok?1:-1;r->score=j->quality;resultGestureName(r->name,196,j->s->c,g);deliver(r);}finishJob(j);}while(PeekMessageW(&m,nullptr,0,0,1))if(m.message==MSG_EXECUTE)finishJob((Job*)m.lParam);return 0;}
-static DWORD CB workmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);SetEvent(workready);while(waitMessage(m)){if(m.message==MSG_RELEASE_SNAPSHOT){release((Snapshot*)m.lParam);continue;}if(m.message!=MSG_JOB)continue;Job*j=(Job*)m.lParam;if(!running){finishJob(j);continue;}int q=0,idx=-1,conflictId=0,otherId=0,closest=-1;if(j->deferred){auto t=target(j->t.hwnd);if(t.hwnd==j->t.hwnd&&t.pid==j->t.pid){t.child=j->t.child;t.x=j->t.x;t.y=j->t.y;t.hasPoint=j->t.hasPoint;j->t=t;idx=choose(*j,q,&conflictId,&otherId,&closest);}}else idx=choose(*j,q,&conflictId,&otherId,&closest);MG_LOG("recognition job index score conflict other",(up)j,idx,q,conflictId,otherId);if(idx>=0){j->selectedIndex=idx;j->quality=j->direct?-1:q;Result* notice=recognitionNotice(j->s->c,idx,j->quality);if(running&&PostThreadMessageW(actiontid,MSG_EXECUTE,0,(LP)j)){deliver(notice);continue;}freep(notice);q=-3;}Result*r=(Result*)alloc(sizeof(Result));if(r){r->ok=0;r->score=q;r->conflictId=conflictId;r->otherId=otherId;if(q>=0&&closest>=0&&closest<j->s->c.ng)resultGestureName(r->name,196,j->s->c,j->s->c.g[closest]);deliver(r);}finishJob(j);}while(PeekMessageW(&m,nullptr,0,0,1)){if(m.message==MSG_JOB)finishJob((Job*)m.lParam);else if(m.message==MSG_RELEASE_SNAPSHOT)release((Snapshot*)m.lParam);}return 0;}
+// Verify uncertain identities and external global fallbacks on the worker,
+// not in the mouse hook. Never interpret a failed executable query as an
+// unmatched application.
+static bool refreshRecognitionTarget(Job& j){
+ Target fresh=identity(j.t.hwnd);
+ if(!fresh.hwnd||fresh.hwnd!=j.t.hwnd||fresh.pid!=j.t.pid)return false;
+#ifdef _WIN32
+ if(fresh.pid==ownPid){
+  DWORD n=GetModuleFileNameW(nullptr,fresh.exe,520);
+  if(!n||n>=520)fresh.exe[0]=0;
+ }else if(j.s->pathRules||mgdiag::enabled()){
+  H process=OpenProcess(0x1000,0,fresh.pid);
+  if(process){DWORD n=520;if(!QueryFullProcessImageNameW(process,0,fresh.exe,&n))fresh.exe[0]=0;CloseHandle(process);}
+ }
+ if(!GetClassNameW(fresh.hwnd,fresh.cls,128))return false;
+ GetWindowTextW(fresh.hwnd,fresh.title,256);
+#else
+ fresh=target(j.t.hwnd);
+#endif
+ if(j.s->pathRules&&!*fresh.exe)return false;
+ Target verified=identity(j.t.hwnd);
+ if(verified.hwnd!=fresh.hwnd||verified.pid!=fresh.pid)return false;
+ fresh.child=j.t.child;fresh.x=j.t.x;fresh.y=j.t.y;fresh.hasPoint=j.t.hasPoint;
+ fresh.inputSafety=j.t.inputSafety;j.t=fresh;return true;
+}
+static DWORD CB workmain(void*){MSG m{};PeekMessageW(&m,nullptr,0,0,0);SetEvent(workready);while(waitMessage(m)){if(m.message==MSG_RELEASE_SNAPSHOT){release((Snapshot*)m.lParam);continue;}if(m.message!=MSG_JOB)continue;Job*j=(Job*)m.lParam;if(!running){finishJob(j);continue;}int q=0,idx=-1,conflictId=0,otherId=0,closest=-1;MatchTrace trace{};bool diagnostic=mgdiag::enabled();
+ bool verified=false,identityOK=true;
+ if(!j->direct&&(j->deferred||(j->s->pathRules&&!*j->t.exe))){identityOK=refreshRecognitionTarget(*j);verified=identityOK;}
+ if(identityOK)idx=choose(*j,q,&conflictId,&otherId,&closest,diagnostic?&trace:nullptr);
+ if(identityOK&&!verified&&!j->direct&&j->s->rules&&j->t.pid!=ownPid&&(idx<0||j->s->c.g[idx].profile==0)){
+  identityOK=refreshRecognitionTarget(*j);verified=identityOK;
+  if(identityOK)idx=choose(*j,q,&conflictId,&otherId,&closest,diagnostic?&trace:nullptr);
+ }
+ if(!identityOK){idx=-1;q=-3;closest=-1;conflictId=otherId=0;trace=MatchTrace{};}
+ MG_LOG("recognition job index score conflict other",(up)j,idx,q,conflictId,otherId);
+ if(diagnostic){
+  MG_LOG("recognition scopes job profile localID localScore globalID globalScore selectedProfile threshold",(up)j,trace.profileId,trace.localId,trace.localScore,trace.globalId,trace.globalScore,idx>=0?j->s->c.g[idx].profile:-1,j->s->c.sensitivity);
+  MG_LOG("recognition identity job hwnd pid deferred refreshed valid",(up)j,(up)j->t.hwnd,j->t.pid,j->deferred,verified,identityOK);
+#ifdef _WIN32
+  mgdiag::executable((up)j,j->t.pid,j->t.exe);
+#endif
+ }if(idx>=0){j->selectedIndex=idx;j->quality=j->direct?-1:q;Result* notice=recognitionNotice(j->s->c,idx,j->quality);if(running&&PostThreadMessageW(actiontid,MSG_EXECUTE,0,(LP)j)){deliver(notice);continue;}freep(notice);q=-3;}Result*r=(Result*)alloc(sizeof(Result));if(r){r->ok=0;r->score=q;r->conflictId=conflictId;r->otherId=otherId;if(q>=0&&closest>=0&&closest<j->s->c.ng)resultGestureName(r->name,196,j->s->c,j->s->c.g[closest]);deliver(r);}finishJob(j);}while(PeekMessageW(&m,nullptr,0,0,1)){if(m.message==MSG_JOB)finishJob((Job*)m.lParam);else if(m.message==MSG_RELEASE_SNAPSHOT)release((Snapshot*)m.lParam);}return 0;}
 static inline Snapshot* snapshot(const Config&c){return buildSnapshot(c);}
 static inline void publish(const Config&c){MG_LOG("config published enabled gestures apps exclusions button threshold sensitivity",c.enabled,c.ng,c.na,c.ne,c.button,c.threshold,c.sensitivity);if(!running||!hooktid||!hookready||WaitForSingleObject(hookready,0)!=0||shouldStop())return;if(hookok&&publishedSnapshot&&sameRuntimeConfig(c,*publishedSnapshot))return;auto*s=buildSnapshot(c,publishedSnapshot);if(!s){(void)0;return;}retain(s);if(PostThreadMessageW(hooktid,MSG_CONFIG,0,(LP)s)){rememberPublished(s);}else{release(s);(void)0;}release(s);}
 static inline void hotjob(const Config&c,int vk,int m){if(screenshotShortcut(vk,m)||!c.enabled||!running)return;auto*s=snapshot(c);if(!s)return;Job*j=allocateJob();if(!j){release(s);return;}j->s=s;POINT p{};if(!GetCursorPos(&p)){release(s);freep(j);return;}j->t=target(gestureWindowAt(p));j->t.x=p.x;j->t.y=p.y;j->t.hasPoint=1;j->hotkey=vk;j->mods=m;postjob(j);}
